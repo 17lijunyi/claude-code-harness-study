@@ -1,0 +1,11 @@
+Use case: identity-preserve / ads-marketing.
+Asset type: a new Chinese GitHub educational repository cover, created by editing the provided reference cover into a sibling artwork.
+Reference/edit target: the supplied image establishes the visual identity, cream white backdrop, thin charcoal rounded rectangle inner border, rounded bold charcoal title typography, soft 3D clay finish, and the exact gray-white mascot identity.
+Primary request: Replace the previous project content with a cover for "Claude Code 学习手册". Keep the same polished visual family as the reference. Landscape banner approximately 3:1. This is the INNER ARTWORK ONLY: retain its single thin rounded dark border but do not add a window top title bar; the document window header is added separately with existing code.
+Text, verbatim, on left half:
+"Claude Code"
+"学习手册"
+"17 章实战 · 从循环到完整 Agent"
+Main first two lines large bold rounded black lettering, well fitted and clear at thumbnail sizes. Underline main title with a cyan blue hand-drawn stroke. Third line smaller but readable. Do not write the previous title.
+On right half: the SAME gray-white chibi mascot with flowing tied-up white hair, face mask, bright glowing white eyes, hoodie, pants and sneakers, in a distinctly NEW action: seated sideways on a small stack of blue and lavender documentation books, leaning toward an open translucent blue terminal/model-workbench and connecting a colorful cyan puzzle module into a lavender circuit-like flow diagram. One hand operates the terminal, one hand inserts a small cyan module. Visible two arms, two coherent legs with knees and feet, normal hands. Blue and purple code panels, small mint and orange modules trace a short loop above the workbench, suggesting tool calls, context and Agent loops. Props colorful; mascot entirely grayscale. Avoid repeating the previous standing-reading-book pose.
+Composition: all elements contained safely inside the rounded border, no cut-off hair or shoes. Balanced left typography and right sculpted scene, soft studio shadows on warm white. No watermark, no additional labels, no logos beyond the text. No outer category header. Match the reference character and material quality closely.
