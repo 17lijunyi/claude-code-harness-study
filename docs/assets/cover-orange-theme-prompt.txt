@@ -1,0 +1,11 @@
+Use case: precise-object-edit.
+Edit target: the supplied Claude Code 学习手册 banner.
+Primary request: change the overall ACCENT COLOR THEME from blue/cyan/purple to Claude terracotta ORANGE. Preserve all objects, design, typography, geometry and character pose exactly.
+Color specification:
+- The cyan underline and short title flourishes become warm orange.
+- The blue computer/terminal screen, translucent terminal body, base, and large blue book become warm burnt-orange / amber-orange with gentle peach highlights and the same sculpted translucent 3D materials.
+- Lavender/purple books, floating document/code cards, flowchart and loop arrows become pale peach, apricot and warm cream-orange variations, with darker terracotta details for contrast.
+- The orange Claude brand icon with WHITE irregular radial asterisk in the top-right first workflow tile MUST remain clearly identifiable and unchanged in form.
+- The mint tool tile and cyan puzzle can become warm pale peach / apricot accents so ORANGE dominates the props.
+- Use an elegant coordinated terracotta palette around #D97757, #E79566, #F6C3A3 and #FBEADF. Avoid neon orange.
+Invariants: mascot remains entirely gray-white, with unchanged flowing white tied hair, mask, glowing white eyes, hoodie, seated pose, hand positions, two legs and sneakers. Keep exact title "Claude Code", "学习手册" and subtitle "17 章实战 · 从循环到完整 Agent" in DARK CHARCOAL, same positions and font shapes. Keep warm white background, soft studio lighting, thin dark rounded inner border, same approx 3:1 size, margins, composition, object counts and proportions. Do NOT add a category window header here; it will be added with code. No new objects, no deleted objects, no watermark. Only recolor the existing colored accent elements into a coherent ORANGE theme.

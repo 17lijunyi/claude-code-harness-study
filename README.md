@@ -1,4 +1,4 @@
-![Claude Code 学习手册：17 章实战，从循环到完整 Agent](docs/assets/cover.png)
+![Claude Code 学习手册：17 章实战，从循环到完整 Agent](docs/assets/cover.png?v=39d053b1be45)
 
 # Claude Code 学习手册
 
