@@ -1,38 +1,56 @@
-# s02: Tool Use — Add a Tool, Add Just One Line
-
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md)
+# s02: Tool Use — 多加一个工具，只加一行
 
 s01 → `s02` → [s03](../s03_permission/) → s04 → ... → s16 → s17
-> *"Add a tool, add just one handler"* — The loop stays the same. Register the new tool in the dispatch map and you're done.
+> *"加一个工具，只加一行"* — 循环不用动，新工具在分发表里登记一行就行。
 >
-> **Harness Layer**: Tool Dispatch — Expanding the model's reach.
+> **Harness 层**: 工具分发 — 扩展模型能触达的边界。
 
 ---
 
-## Only One Tool: Bash
+## 本章要学会的判断
 
-The s01 Agent has only one tool: bash. To read a file, `cat`; to write, `echo "..." > file.py`; to edit, `sed`.
+- **它解决什么**：给模型一双手：查数据、读写文件、执行操作。
+- **什么时候需要它**：光靠模型自己的知识不够，要去查、去改、去动手。
+- **你要拍板的规则**：给哪些工具（越少越好）；哪些只读、哪些能写；工具说明由谁写、谁审。
 
-The model thinks "read this file" but has to spell out `cat path/to/file`. An extra layer of translation that wastes tokens and invites errors.
+> 代码看不懂可以先跳过，到网页上看「回放」动画。详细的判断方法在本章末尾的「产品经理视角」。
+
+### 本章新词
+
+每章最多三个新词。看不懂的其他词，去[名词表](../guide/glossary.md)查。
+
+| 词 | 意思 | 比喻 |
+|---|---|---|
+| 专用工具 | 一个工具只做一件事：读文件、写文件、改文件、找文件、执行命令 | 螺丝刀、锤子、扳手各一把，而不是一把万能钥匙 |
+| 工具说明 | 每个工具附带的一句话，告诉模型它是干什么的、什么时候用 | 工具箱上的标签 |
+| 查表分发 | 模型只说工具的名字，程序拿名字去一张表里找真正干活的代码 | 前台按分机表把电话转给对应的人 |
 
 ---
 
-## Overview: Tool Dispatch
+## 问题
 
-![Tool Dispatch](images/tool-dispatch.en.svg)
+s01 的 Agent 只有「执行命令」一个工具。读文件、写文件、改文件，都得先拼出一条命令。
 
-The s01 loop is fully preserved (LLM call, `tool_use` block check, message append — not a single word changed). The only change is in that one line of tool execution: `run_bash()` is replaced with `TOOL_HANDLERS[block.name]()` dispatch lookup.
-
-Adding a tool to the Agent requires just two things:
-
-1. **Define the tool**: Add one entry to the `TOOLS` array
-2. **Register the handler**: Add one mapping in the `TOOL_HANDLERS` dict
+模型想的是「读这个文件」，却要先把它翻译成一条命令。多了一层翻译，多花钱，还容易拼错。
 
 ---
 
-## From 1 Tool to 5 Tools
+## 解决方案
 
-s01 had only bash:
+![Tool Dispatch](images/tool-dispatch.svg)
+
+s01 的循环一行都不改。变的只有「执行工具」那一步：以前写死了只会执行命令，现在模型说出工具的名字，程序拿名字去一张表里查，找到对应的那段代码去做。
+
+给 Agent 加一个工具只需要做两件事：
+
+1. **写一条工具说明**：名字加一句「它是干什么的」，让模型知道什么时候用
+2. **在表里加一行**：这个名字对应哪段代码
+
+---
+
+## 从 1 个工具到 5 个工具
+
+s01 只有一个 bash：
 
 ```python
 TOOLS = [{"name": "bash", ...}]
@@ -40,7 +58,7 @@ TOOLS = [{"name": "bash", ...}]
 def run_bash(command): ...
 ```
 
-s02 expands to 5 tools, each independently defined:
+s02 加到 5 个，每个工具都是独立定义：
 
 ```python
 TOOLS = [
@@ -52,7 +70,7 @@ TOOLS = [
 ]
 ```
 
-Each tool has its own implementation function:
+每个工具有自己的实现函数：
 
 ```python
 def run_read(path, limit=None):
@@ -63,14 +81,14 @@ def run_read(path, limit=None):
 
 def run_write(path, content):
     safe_path(path).write_text(content)
-    return f"Wrote {len(content)} bytes to {path}"
+    return f"已写入（{len(content)} 字节）：{path}"
 
 def run_edit(path, old_text, new_text):
     text = safe_path(path).read_text()
     if old_text not in text:
-        return "Error: text not found"
+        return "错误：找不到要替换的文字"
     safe_path(path).write_text(text.replace(old_text, new_text, 1))
-    return f"Edited {path}"
+    return f"已修改 {path}"
 
 def run_glob(pattern):
     import glob as g
@@ -79,7 +97,7 @@ def run_glob(pattern):
 
 ---
 
-## Tool Dispatch
+## 工具分发
 
 ```python
 TOOL_HANDLERS = {
@@ -90,70 +108,124 @@ TOOL_HANDLERS = {
     "glob":       run_glob,
 }
 
-# Only one line changed in the loop — from hardcoded run_bash to dispatch lookup:
+# 循环里只改了一行——从硬编码 run_bash 变成查表：
 for block in tool_calls:
-    handler = TOOL_HANDLERS[block.name]    # lookup
-    output = handler(**block.input)         # call
+    handler = TOOL_HANDLERS[block.name]    # 查表
+    output = handler(**block.input)         # 调用
     results.append(...)
 ```
 
-Adding a tool = one entry in `TOOLS` array + one line in `TOOL_HANDLERS` dict. The loop stays the same.
+加一个工具 = 在 `TOOLS` 数组加一条 + 在 `TOOL_HANDLERS` 字典加一行。循环不变。
 
 ---
 
-## Multiple Tool Calls
+## 多个工具调用
 
-The model often returns multiple tool_use calls at once — "read a.py and b.py, then list all .py files".
+模型经常一次返回多个 tool_use："读一下 a.py 和 b.py，然后列出所有 .py 文件"。
 
-Calls are executed one by one in their original `response.content` order.
-
----
-
-## Quick Reference
-
-| Concept | One-Liner |
-|---------|-----------|
-| TOOL_HANDLERS | Tool name → handler function dict. Add a tool = add one mapping line |
-| Tool Definition | JSON schema telling the model "what I can do" |
-| Multiple tool calls | Model may return multiple tool_use at once; calls execute in their original order |
-| Loop Unchanged | s01's `while True` loop — not a single line changed |
+这些调用按照 `response.content` 中的原始顺序逐个执行。
 
 ---
 
-## Changes from s01
+## 速查
 
-| Component | Before (s01) | After (s02) |
-|-----------|-------------|-------------|
-| Tool count | 1 (bash) | 5 (+read, write, edit, glob) |
-| Tool execution | Hardcoded `run_bash()` | TOOL_HANDLERS dispatch lookup |
-| Path safety | None | safe_path validation (file tools only) |
-| Loop | `while True` + `tool_use` block | Identical to s01 |
+| 概念 | 一句话 |
+|------|--------|
+| TOOL_HANDLERS | 工具名 → 处理函数的字典。加工具 = 加一行映射 |
+| 工具定义 | 告诉模型"我能做什么"的 JSON schema |
+| 多工具调用 | 模型可一次返回多个 tool_use，并按原始顺序逐个执行 |
+| 循环不变 | s01 的 `while True` 循环一行都没改 |
 
 ---
 
-## Try It
+## 相对 s01 的变更
+
+| 组件 | 之前 (s01) | 之后 (s02) |
+|------|-----------|-----------|
+| 工具数量 | 1 (bash) | 5 (+read, write, edit, glob) |
+| 工具执行 | 硬编码 `run_bash()` | TOOL_HANDLERS 查表分发 |
+| 路径安全 | 无 | safe_path 校验（仅 file tools） |
+| 循环 | `while True` + `tool_use` block | 与 s01 完全一致 |
+
+---
+
+## 试一下
 
 ```sh
-cd learn-claude-code
+cd claude-code-harness-study
 python s02_tool_use/code.py
 ```
 
-Try these prompts:
+试试这些话：
 
-1. `Read the file README.md and tell me what this project is about`
-2. `Create a file called test.py that prints "hello", then read it back`
-3. `Find all Python files in this directory`
-4. `Read both README.md and requirements.txt, then create a summary file`
+1. `读一下 README.md，告诉我这个项目是做什么的`（只用「读文件」一个工具）
+2. `新建一个 test.py，让它打印 "hello"，然后把文件内容读回来`（先「写文件」再「读文件」）
+3. `找出这个文件夹里所有的 Python 文件`（用「找文件」工具，而不是拼命令）
+4. `把 README.md 和 requirements.txt 都读一遍，然后写一个 summary.md 总结`（看模型是一次要两个工具，还是分两圈）
 
-What to watch for: When does the model call just one tool, and when does it call multiple at once? Are multiple tool calls executed in the correct order?
+观察重点：模型什么时候只用一个工具，什么时候一次要好几个？一次要好几个时，程序是按什么顺序做的？
 
 ---
 
-## What's Next
+## 产品经理视角
 
-The Agent now has 5 specialized tools. File tools are protected by `safe_path`, but bash is unrestricted — `rm -rf /` still runs.
+> 工具决定 Agent 能碰到什么。给哪些工具、每个工具能做什么，是产品经理划定产品边界最直接的方式。
 
-→ s03 Permission: Add a gate before tool execution — is this operation safe? Does it need user approval?
+### 什么信号说明需要它
 
+- 回答需要实时或内部的数据，比如订单、库存、日程，这些模型自己并不知道。
+- 需要真的动手做事：建文件、发消息、改系统里的数据。
+- 本章开头的症状：只有一个万能工具，模型要绕弯子才能完成简单动作，又慢又容易出错。
 
-<!-- translation-sync: zh@v1, en@v1, ja@v1 -->
+### 代价
+
+- **工具越多，模型越容易选错**。每个工具的说明还要随每次请求一起发给模型，工具多了，费用也会上升。
+- **每个工具都是一个新的出错点**，也是一个新的安全口子。
+- **说明要有人写、有人维护**。说明写得含糊，模型就会乱用。
+
+### 先试试更便宜的办法
+
+- 资料不多、也不常变：直接写进提示词。
+- 只需要读一次的资料：让用户上传文件。
+
+### 你要拍板的规则
+
+| 规则 | 示例 |
+|---|---|
+| 给哪些工具 | 从任务倒推，只给完成任务必需的；第一版先给 3～5 个 |
+| 只读还是能写 | 先全部只读，确有需要再一个个开放写入 |
+| 说明谁写、谁审 | 由业务方审核，写清「什么时候用、什么时候不要用」 |
+| 万能工具给不给 | 能执行任意命令的工具（本课里那个「执行命令」的工具）风险最大，面向普通用户的产品一般不给 |
+
+### 怎么衡量
+
+- **工具选错率**：抽查对话，看模型有没有用错工具，或者该用的时候没用。
+- **调用失败率**：参数填错、调用报错的比例。
+- **每个工具的使用次数**：长期没人用的工具，可以删掉。
+
+### 真实产品里的样子
+
+- Claude Code 把读文件、改文件、搜索、执行命令拆成不同的工具，而不是只给一个命令行。原因和本章一样：专用工具更准，也更好管。
+- Anthropic 在公开的 Agent 设计建议里提到，写工具说明要像给团队新人写说明书一样，把用法、边界、例子写清楚。
+
+### 面试题
+
+**「你会给一个电商客服 Agent 哪些工具？」**
+
+答题要点：
+
+- 从用户要办的事倒推，不是从系统有哪些接口出发。
+- 只读：查订单、查物流、查退换货政策。
+- 会改变外部世界的：申请退款、修改地址。这些要配合权限（s03）。
+- 不给：直接改数据库、群发消息。
+- 先少后多，上线后看使用数据再加。
+
+> 16 个组件的判断卡放在一起比较，见 [选型篇](../guide/README.md)。
+
+---
+
+## 接下来
+
+现在 Agent 有 5 个专用工具。读写文件的工具只能碰项目文件夹里的东西，但「执行命令」这个工具没有任何限制，一条删光整台电脑的命令照样能跑。
+
+s03 权限（Permission）→ 在工具执行之前加一道门：这个操作安全吗？需要用户批准吗？

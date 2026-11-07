@@ -1,34 +1,52 @@
-# s06: Subagent — Give a Subtask Its Own Context
-
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md)
+# s06: Subagent — 给子任务一段独立上下文
 
 s01 → s02 → s03 → s04 → s05 → `s06` → [s07](../s07_skill_loading/) → s08 → ... → s16 → s17
 
-> A subagent starts with a fresh `messages[]`. Its final text returns to the parent; its intermediate conversation does not.
+> Subagent 从全新的 `messages[]` 开始。最终文本返回父循环，中间对话不会进入父上下文。
 >
-> **Harness Layer**: Delegation — Run a focused task in a separate conversation context.
+> **Harness 层**: 委派 — 在另一段对话上下文中处理一个明确的子任务。
 
 ---
 
-## The Problem
+## 本章要学会的判断
 
-The Agent is fixing a bug. It reads many files to trace the call chain, and every tool call and result stays in the parent's `messages[]`. Once the call chain is understood, most of those intermediate details are no longer needed, but they still occupy context.
+- **它解决什么**：把要读大量资料的子任务交给另一个 Agent，只带回结论，主对话不会被挤满。
+- **什么时候需要它**：某个子任务要读很多东西，但最后只需要一个结论。
+- **你要拍板的规则**：哪类任务允许派出去；子 Agent 能用哪些工具（通常只读）；最多派几个；结果按什么格式交回。
+
+> 代码看不懂可以先跳过，到网页上看「回放」动画。详细的判断方法在本章末尾的「产品经理视角」。
+
+### 本章新词
+
+每章最多三个新词。看不懂的其他词，去[名词表](../guide/glossary.md)查。
+
+| 词 | 意思 | 比喻 |
+|---|---|---|
+| 派活（task） | 把一件独立的小任务交给另一个 Agent，它干完只汇报结论 | 让同事去查资料，回来只说结论 |
+| 新记录本 | 子 Agent 从一本空白记录本开始，看不到主对话 | 新来的同事不知道之前的讨论 |
+| 只回结论 | 子 Agent 的中间过程不进主对话，只有最后一段话进 | 会议纪要只写结论，不写争论过程 |
 
 ---
 
-## The Solution
+## 问题
 
-![Subagent Overview](images/subagent-overview.en.svg)
-
-Calling `task` synchronously runs a nested agent loop with a fresh `messages[]`. When that loop finishes, its final text becomes the tool result in the parent conversation.
-
-This is message isolation, not process or filesystem isolation. Parent and subagent run in the same Python process and share `WORKDIR`, so writes and commands still affect the same workspace. The subagent has the five base tools but no `task`, and its tool calls use the same permission and lifecycle hooks as the parent.
+Agent 在修一个错误。为了弄清几个文件之间怎么互相调用，它读了很多文件，每次读到的内容都留在主记录本里。关系弄清以后，大部分中间细节已经没用了，却还占着位置。
 
 ---
 
-## How It Works
+## 解决方案
 
-**run_subagent** creates the fresh message list, runs the nested loop, and returns the final text:
+![Subagent Overview](images/subagent-overview.svg)
+
+多一个「派活」工具。模型用它时，程序另开一本空白记录本，只写上那段任务描述，再跑一个独立的循环；这个循环结束后，它的最终回答作为一条工具结果写回主记录本。
+
+隔开的是记录本，不是电脑：父子 Agent 用同一个项目文件夹，子 Agent 写文件、跑命令同样会生效。子 Agent 有五个基础工具，但没有「派活」，不能再往下派；它用的工具同样要过权限检查和钩子。
+
+---
+
+## 工作原理
+
+**run_subagent** 创建新的消息列表，运行嵌套循环，并返回最终文本：
 
 ```python
 SUB_TOOLS = list(BASE_TOOLS)  # no task tool
@@ -57,7 +75,7 @@ def run_subagent(prompt: str) -> str:
     return "Subagent stopped after 30 turns without a final answer."
 ```
 
-The main Agent calls it just like any other tool:
+主 Agent 调用时，跟调其他工具一样：
 
 ```python
 TASK_TOOL = {
@@ -74,42 +92,96 @@ TOOLS = [*BASE_TOOLS, TASK_TOOL]
 TOOL_HANDLERS = {**BASE_HANDLERS, "task": run_subagent}
 ```
 
-The boundary is:
+实际边界如下：
 
-| Decision | Choice | Reason |
-|----------|--------|--------|
-| Conversation | Fresh `messages[]` | Parent history is not copied into the subagent |
-| Execution | Same process and `WORKDIR` | Filesystem changes remain visible to both loops |
-| Return value | Final text only | Child tool calls and results are not copied into parent messages |
-| Delegation depth | No `task` in `SUB_TOOLS` | This lesson permits one delegation level |
-| Tool policy | Shared Hooks | Parent and subagent use the same permission checks |
+| 决策 | 选择 | 原因 |
+|------|------|------|
+| 对话 | 全新的 `messages[]` | 不把父对话复制给子 Agent |
+| 执行 | 同一进程和 `WORKDIR` | 两个循环都能看到文件系统修改 |
+| 返回值 | 只返回最终文本 | 子 Agent 的工具调用和结果不进入父消息列表 |
+| 委派深度 | `SUB_TOOLS` 中没有 `task` | 本章只允许一层委派 |
+| 工具策略 | 共享 Hooks | 父子循环使用相同的权限检查 |
 
-The parent dispatches `task` through the same handler map as its other tools. The subagent uses `SUB_SYSTEM`, `SUB_TOOLS`, and its own local `messages` list.
+父 Agent 与其他工具一样，通过 handler map 分发 `task`。子 Agent 使用 `SUB_SYSTEM`、`SUB_TOOLS` 和自己的局部 `messages` 列表。
 
 ---
 
-## Try It
+## 试一下
 
 ```sh
-cd learn-claude-code
+cd claude-code-harness-study
 python s06_subagent/code.py
 ```
 
-Try these prompts:
+试试这些话：
 
-1. `Use a subtask to find what testing framework this project uses` (sub-Agent reads files, main Agent receives only the conclusion)
-2. `Delegate: read all .py files in s01_agent_loop/ and summarize what each one does`
-3. `Use a task to create s06_subagent/example/string_tools.py with a slugify(text: str) function, then verify it from the parent agent`
+1. `派一个子任务去查这个项目用的是哪个测试框架`（子 Agent 去读文件，主 Agent 只收结论）
+2. `派一个子任务读完 s01_agent_loop 下所有 Python 文件，总结每个文件是干什么的`
+3. `派一个子任务在 s06_subagent/example 下新建 string_tools.py，写一个把标题变成网址友好格式的函数，然后由你自己检查一遍`
 
-What to watch for: Do `[Subagent started]` / `[Subagent done]` appear? Do subagent tool calls print as `[sub] ...`? Does the parent continue with only the final text returned by `task`?
+观察重点：屏幕上有没有「[子 Agent 开始]」和「[子 Agent 结束]」？子 Agent 的工具调用是不是带「[子]」前缀？主 Agent 是不是只收到一段最终结论？
 
 ---
 
-## What's Next
+## 产品经理视角
 
-The Agent can now break tasks apart. But different tasks require different knowledge: editing frontend components needs React conventions, writing SQL needs table schemas. Stuffing all this knowledge into the system prompt would blow up the context.
+> 把「要读一大堆资料、最后只要一个结论」的活派给子 Agent，主对话只收结论，不会被过程挤满。
 
-→ s07 Skill Loading: Inject skills on demand instead of piling documents into the system prompt. Load only when needed, as natural as reading a file.
+### 什么信号说明需要它
 
+- 某个子任务要翻大量资料，比如搜几十个文件、读十几篇文档，但最后只需要一个结论。
+- 主对话被这些过程资料挤满，开始忘事、变慢、变贵。
+- 几块调研互不依赖，可以分开做。
 
-<!-- translation-sync: zh@v2, en@v2, ja@v2 -->
+### 代价
+
+- **更贵**：多一轮甚至多轮模型调用，总费用会增加。
+- **容易跑偏**：子 Agent 看不到主对话，任务交代不清，它就会做偏，或者做重复的工作。
+- **难排查**：出了错，要沿着主 Agent、子 Agent 一层层往下查。
+- **权限不能放松**：本章的子 Agent 和主 Agent 共用同一个工作区，它写的文件、执行的命令同样会生效。
+
+### 先试试更便宜的办法
+
+- 资料不多：主 Agent 自己做完。
+- 先试试压缩（s08）。
+
+### 你要拍板的规则
+
+| 规则 | 示例 |
+|---|---|
+| 什么任务能派出去 | 只派调研、搜索、阅读这类；改东西的活留给主 Agent |
+| 子 Agent 能用哪些工具 | 默认只读 |
+| 最多派几个、预算多少 | 一次最多 3 个，每个不超过主任务预算的 20% |
+| 结论按什么格式交回 | 结论 + 依据出处 + 没查到的部分 |
+
+### 怎么衡量
+
+- 主对话的长度和费用有没有下降。
+- 子 Agent 交回的结论准不准（抽查）。
+- 总费用：如果总费用明显上升，质量却没有提升，就不值得。
+
+### 真实产品里的样子
+
+- Claude Code 会把搜索代码库这类任务派给子 Agent。用户也可以自定义专门的子 Agent，比如「代码审查员」，给它单独的说明和工具范围。
+- Anthropic 公开过自家深度研究功能的做法：主 Agent 拆分问题，派多个子 Agent 并行搜索，最后汇总。他们也公布了代价：这种多 Agent 方式消耗的 token 大约是普通聊天的 15 倍。
+
+### 面试题
+
+**「什么情况下你会让 Agent 派子 Agent，什么情况下不会？」**
+
+答题要点：
+
+- 会：子任务资料多、结论小，而且彼此独立。
+- 不会：任务需要频繁来回沟通；上下文本来就够用；要改东西的任务（容易互相冲突）。
+- 代价是费用和排查难度。
+- 用主对话长度、总费用和结论准确率来衡量值不值。
+
+> 16 个组件的判断卡放在一起比较，见 [选型篇](../guide/README.md)。
+
+---
+
+## 接下来
+
+Agent 现在能拆任务了。但每个任务需要的知识不一样：改代码要知道代码风格规范，写数据库查询要知道表结构。这些知识全塞进系统提示词，记录本直接爆了。
+
+s07 技能（Skill Loading）→ 规范按需加载，不在系统提示词里堆文档。用到的时候才读，和读文件一样自然。

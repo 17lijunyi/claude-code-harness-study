@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="280" height="64" viewBox="0 0 280 64" role="img" aria-labelledby="title">
+<title id="title">Claude Code 学习手册</title>
+<rect x="0" y="8" width="48" height="48" rx="12" fill="#d97757"/>
+<g stroke="#fff9f4" stroke-width="3.6" stroke-linecap="round">
+<path d="M24 17v30M9 32h30M13 21l22 22M13 43l22-22M18 18l12 28M10 26l28 12M10 38l28-12M18 46l12-28"/>
+</g>
+<text x="60" y="30" font-family="Arial, PingFang SC, sans-serif" font-size="23" font-weight="750" fill="#242527">Claude Code</text>
+<text x="61" y="50" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="15" font-weight="600" fill="#975637">学习手册</text>
+</svg>

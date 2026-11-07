@@ -1,39 +1,57 @@
-# s09: Memory — Keep Useful Knowledge Across Sessions
-
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md)
+# s09: Memory — 让重要信息跨会话保留下来
 
 s01 → ... → s07 → s08 → `s09` → [s10](../s10_task_system/) → s11 → ... → s16 → s17
-> *"Keep information that later tasks will need."* File storage + an index + relevance selection + on-demand recall.
+> *"把以后还会用到的信息留下来。"* 文件存储 + 索引 + 相关性选择 + 按需召回。
 >
-> **Harness layer**: Memory stores reusable knowledge outside the conversation and recalls it for related tasks.
+> **Harness 层**：Memory 在会话之外保存可复用知识，并在相关任务中取回。
 
 ---
 
-## The Problem
+## 本章要学会的判断
 
-An Agent starts a new session without the previous conversation in `messages`. A coding preference, project fact, or debugging clue from an earlier session may still matter. Without persistent storage, the user has to provide it again.
+- **它解决什么**：跨对话记住用户的偏好和背景，不用每次重新交代。
+- **什么时候需要它**：用户反复交代同样的事；工作需要跨天延续。
+- **你要拍板的规则**：记什么、不记什么（敏感信息不记）；保存多久；用户能不能查看和删除；新旧记忆冲突以谁为准。
 
-A complete transcript works as an archive, but sending it with every request does not scale. The conversation keeps growing, useful information becomes hard to locate, and old facts may no longer be true. Memory must decide what is worth keeping across sessions and which records belong in the current task.
+> 代码看不懂可以先跳过，到网页上看「回放」动画。详细的判断方法在本章末尾的「产品经理视角」。
 
-![Memory Overview](images/memory-overview.en.svg)
+### 本章新词
 
----
+每章最多三个新词。看不懂的其他词，去[名词表](../guide/glossary.md)查。
 
-## Why Not Put Everything in the System Prompt?
-
-The direct approach is to write preferences and project facts into one file, then put the entire file in the system prompt. It remembers the information, but every LLM call must resend all of it. As the store grows, more unrelated material consumes input tokens and context space.
-
-s07 showed a better reading pattern: keep a short index available and load full content only when needed. Skills are human-authored and read-only. Memory lets the Agent extract information from conversation and reuse it in later work.
-
-This chapter therefore needs four parts: storage, recall, extraction, and consolidation.
-
-![Memory Subsystems](images/memory-subsystems.en.svg)
+| 词 | 意思 | 比喻 |
+|---|---|---|
+| 记忆卡 | 一条长期有用的信息，单独存成一个文件 | 名片盒里的一张卡 |
+| 召回 | 问模型之前，按当前请求挑出相关的几张卡 | 开会前翻出相关的几张名片 |
+| 提取 | 聊完后由模型判断哪些话值得长期记住 | 散会后把要紧的事记进本子 |
 
 ---
 
-## Storage: One File per Record
+## 问题
 
-Each memory is a Markdown file under `.memory/`. YAML frontmatter stores its `name`, `description`, and `type`:
+Agent 开始新会话时，记录本是空的，上一次的对话不在里面。你之前说过的偏好、项目背景、排查线索，下次任务还可能用到。没有长期存储，这些只能由你再说一遍。
+
+把完整对话记录留下来适合归档，但不适合每次都发给模型：越来越长，当前任务需要的那几句很难找，旧事实也可能已经过期。记忆要解决两个问题：哪些信息值得长期保存，以及当前任务该取回哪几条。
+
+![Memory Overview](images/memory-overview.svg)
+
+---
+
+## 解决方案
+
+最省事的做法，是把你的偏好和项目事实写进一个固定文件，启动时全部塞进系统提示词。能记住，但每次问模型都要把全部记忆带上，记得越多，和当前任务无关的就越多。
+
+s07 已经示范过更合适的方式：常驻一份简短目录，用到时才取正文。技能由人来写、只读；记忆则允许 Agent 自己从对话里提取，以后再用。
+
+所以本章要处理四件事：存、找、记、理。
+
+![Memory Subsystems](images/memory-subsystems.svg)
+
+---
+
+## 存储：一个记忆一个文件
+
+每条记忆是 `.memory/` 下的一个 Markdown 文件，YAML frontmatter 记录 `name`、`description` 和 `type`：
 
 ```markdown
 ---
@@ -45,16 +63,16 @@ type: user
 User prefers using tabs, not spaces, for indentation.
 ```
 
-There are four memory types:
+`type` 有四类：
 
-| Type | What it stores | Example |
-|------|----------------|---------|
-| user | A durable user preference | "Use tabs for indentation" |
-| feedback | Guidance that remains useful | "Do not mock the database" |
-| project | A stable project fact | "The authentication rewrite is compliance-driven" |
-| reference | An external pointer or lookup clue | "The pipeline issue is tracked in Linear INGEST" |
+| 类型 | 保存什么 | 示例 |
+|------|---------|------|
+| user | 用户的长期偏好 | “使用 tab 缩进” |
+| feedback | 以后仍适用的工作反馈 | “不要 mock 数据库” |
+| project | 稳定的项目事实 | “认证重写由合规要求驱动” |
+| reference | 外部资料或查找线索 | “流水线问题记录在 Linear INGEST” |
 
-`MEMORY.md` is the index, with one line per memory file. After a write, `rebuild_memory_index()` regenerates it from the files:
+`MEMORY.md` 是索引，每行对应一个记忆文件。写入完成后，`rebuild_memory_index()` 根据文件重新生成索引：
 
 ```python
 def write_memory_file(name, mem_type, description, body):
@@ -64,13 +82,13 @@ def write_memory_file(name, mem_type, description, body):
     return path
 ```
 
-The index supports selection while full content stays in the individual files.
+索引用于选择相关记忆，正文仍然保存在各自的文件中。
 
 ---
 
-## Recall: Select First, Then Load Full Records
+## 召回：先选择，再加载正文
 
-At the start of a user request, `select_relevant_memories()` sends the recent user text and memory catalog to a lightweight model call. It selects at most five relevant records:
+每次用户发起请求时，`select_relevant_memories()` 读取最近的用户消息和记忆目录，让一次轻量模型调用选择最多五条相关记录：
 
 ```python
 prompt = (
@@ -80,20 +98,20 @@ prompt = (
 )
 ```
 
-If the model call or JSON parsing fails, the code falls back to keyword matching. Only after selection does `load_memories()` read the corresponding files, with a limit on the total recalled text.
+如果模型调用或 JSON 解析失败，代码会退回关键词匹配。选择完成后，`load_memories()` 才读取对应文件，并限制召回正文的总长度。
 
 ```python
 relevant_memories = load_memories(messages)
 system = build_system(relevant_memories)
 ```
 
-`build_system()` states that recalled content is background knowledge, not a new user command. The current request wins when it conflicts with memory. This lets the Agent use old information without letting old records issue instructions on the user's behalf.
+`build_system()` 会明确说明：召回内容只是背景知识，不是新的用户命令；如果记忆与当前请求冲突，以当前请求为准。这样既能使用旧信息，也不会让旧记忆替用户发号施令。
 
 ---
 
-## Extraction: Save Reusable Information After the Turn
+## 提取：回合结束后保存可复用信息
 
-Users do not always say "remember this." After the Agent finishes the current response, `extract_memories()` inspects the conversation and keeps only information likely to help later:
+用户不一定会明确说“请记住”。`extract_memories()` 在 Agent 完成本轮回答后检查当前对话，只提取以后仍可能有用的信息：
 
 ```python
 tool_calls = [
@@ -109,17 +127,17 @@ if not tool_calls:
     return
 ```
 
-The model returns candidates, not records that are automatically allowed onto disk. Each candidate carries a `scope`: only `persistent` means that the information should survive into later sessions. `current_task` covers one-off commands, temporary paths, and temporary restrictions.
+模型返回的内容只是候选，不会直接写盘。候选必须带有 `scope`：只有 `persistent` 才表示它应当跨会话保留；`current_task` 表示本次任务的命令、临时路径和临时限制。
 
-`should_store_memory()` performs the final admission check. It rejects incomplete candidates, phrases that refer to the current session or task, and duplicates of existing records. For example, "do not create files in this session" constrains the current work; it must not remain active in the next session.
+`should_store_memory()` 负责最后的检查。字段不完整、带有“本次会话”或“当前任务”等临时含义、或者与已有记忆重复的候选都会被拒绝。比如“这次不要创建文件”只约束当前任务，不应该在下次会话中继续生效。
 
 ---
 
-## Consolidation: Merge Duplicate and Stale Records
+## 整理：合并重复和过期内容
 
-As memory files accumulate, some become duplicate, contradictory, or stale. The teaching implementation calls `consolidate_memories()` after the store reaches ten records and asks the model for a cleaned list.
+记忆文件积累到一定数量后，内容可能重复、矛盾或过期。教学实现达到 10 条时调用 `consolidate_memories()`，让模型生成一份整理后的记录列表。
 
-The code parses and validates the new list before replacing old files. It snapshots the current records first; if deletion or writing fails, it restores the originals and rebuilds the index:
+整理过程先解析并校验新列表，再替换旧文件。替换前会保存快照；删除或写入失败时，代码恢复原文件并重建索引：
 
 ```python
 snapshot = {
@@ -149,45 +167,104 @@ except Exception:
     raise
 ```
 
-The course uses a simple count threshold. A real application must also choose a schedule that fits its data volume and prevent concurrent processes from rewriting the same store.
+课程代码把整理触发条件简化为数量阈值。真实应用还需要根据数据规模和并发方式，决定何时整理以及如何避免多个进程同时改写同一份存储。
 
 ---
 
-## This Lesson's Code
+## 本节代码
 
-| Part | Implementation |
-|------|----------------|
-| Agent Loop | Keeps messages, tool calls, tool results, and hook trigger points |
-| Base tools | `bash`, `read_file`, `write_file`, `edit_file`, `glob` |
-| Storage | `.memory/MEMORY.md` index + `.memory/*.md` records |
-| Recall | Catalog selection + keyword fallback + a body-size limit |
-| Writing | End-of-turn extraction + persistence checks + duplicate filtering |
-| Consolidation | Merge at the threshold; restore old files after replacement failure |
+| 组成 | 本节实现 |
+|------|---------|
+| Agent Loop | 保留消息、工具调用、工具结果和 hooks 触发点 |
+| 基础工具 | `bash`、`read_file`、`write_file`、`edit_file`、`glob` |
+| 存储 | `.memory/MEMORY.md` 索引 + `.memory/*.md` 文件 |
+| 召回 | 目录选择 + 关键词降级 + 正文长度上限 |
+| 写入 | 回合结束后提取 + 持久性检查 + 重复过滤 |
+| 整理 | 达到阈值后合并，失败时恢复原文件 |
 
-> **Boundary with s08:** s08 manages the active session's context budget. s09 manages reusable knowledge outside the conversation. Memory is selective storage, not a lossless transcript backup, and it does not replace context compaction.
+> **与 s08 的边界：** s08 管理当前会话的上下文预算，s09 管理会话之外的可复用知识。Memory 是选择性存储，不是 transcript 的无损备份，也不会取代上下文压缩。
 
 ---
 
-## Try It
+## 试一下
 
 ```sh
-cd learn-claude-code
+cd claude-code-harness-study
 python s09_memory/code.py
 ```
 
-1. Enter `I prefer using tabs for indentation. Remember that.` After the turn, check that `.memory/` contains a new record and `MEMORY.md` contains its index entry.
-2. Enter `q`, restart the program, and ask `What indentation style do I prefer?` Confirm that a new session can recall the preference.
-3. Store another preference unrelated to code formatting, then ask about indentation. Observe that the current request loads only relevant records.
-4. Enter `Do not create files in this session.` Confirm that this temporary requirement does not become a persistent rule for the next session.
+试试这些话：
 
-Exact wording and extraction counts can vary by model. Check what was written to `.memory/` and whether a later session recalls only relevant information.
+1. `我习惯用 Tab 缩进，记住这一点`（结束后看 .memory 文件夹里有没有新文件，目录里有没有这一条）
+2. `我喜欢用哪种缩进？`（先输入 q 退出，重新运行后再问，看新会话能不能想起来）
+3. `记住：周报每周五下午发`（再问一次缩进问题，看它是不是只取回相关的那条）
+4. `这次对话里不要新建任何文件`（临时要求，不该变成下次会话的长期规则）
+
+观察重点：模型的措辞和提取的条数每次可能不同，要看的是 .memory 里存了什么，以及新会话是不是只取回了相关的内容。
 
 ---
 
-## What's Next
+## 产品经理视角
 
-Memory preserves information across sessions, but a complex task also needs durable status and dependency tracking. A TODO kept only in the conversation cannot carry progress across process restarts.
+> 记忆让 Agent 越用越懂用户，也是最容易踩到隐私红线的组件。记什么、存多久、用户能不能删，都是产品决定。
 
-s10 Task System → Persist tasks, statuses, and dependencies to disk.
+### 什么信号说明需要它
 
-<!-- translation-sync: zh@v3, en@v3, ja@v3 -->
+- 用户每次都要重复交代同样的偏好和背景，比如「我是做财务的」「回复用中文」。
+- 任务跨天、跨会话，需要接着上次的进度做。
+- 用户明确说「你记住」。
+
+### 代价
+
+- **隐私合规风险**：记了不该记的，比如健康、薪资、别人的信息。
+- **记错比不记更糟**：一条错误的记忆，会一直影响后面的回答。
+- **记忆会过期**：用户换了岗位，旧记忆还在起作用。
+- **让人不舒服**：用户会觉得被监视，所以必须给查看和删除的入口。
+
+### 先试试更便宜的办法
+
+- 让用户自己填一份「个人设置」或「自定义说明」，内容明确、可控。
+- 只在一次会话里记住，不跨会话保存。
+
+### 你要拍板的规则
+
+| 规则 | 示例 |
+|---|---|
+| 记什么 | 只记和工作相关的偏好和事实 |
+| 绝对不记 | 身份证号、密码、健康状况、薪资、他人隐私 |
+| 存多久 | 半年没用到就自动过期 |
+| 用户的控制权 | 每一条都能查看、修改、删除；可以整体关闭；有「这次不记」的模式 |
+| 新旧冲突以谁为准 | 以最新的、用户亲口说的为准 |
+
+### 怎么衡量
+
+- 用户重复交代同一件事的次数，有没有下降。
+- 记忆出错、被用户纠正的次数。
+- 用户删除记忆、关闭记忆的比例。比例高，说明记得不对，或者让人不舒服。
+
+### 真实产品里的样子
+
+- ChatGPT 的记忆功能：用户可以查看、删除单条记忆，可以整体关闭，也可以开「临时聊天」，让这次对话不被记住。
+- Claude Code 用项目里的一份说明文件（CLAUDE.md）保存项目规范，团队成员可以一起维护，相当于「人写的记忆」。
+
+### 面试题
+
+**「要不要给我们的 Agent 加记忆功能？」**
+
+答题要点：
+
+- 先确认用户是不是真有「反复交代」的痛点。
+- 先试成本更低的办法，比如个人设置。
+- 真要做，就定清楚：记什么、不记什么、存多久、用户怎么控制。
+- 上线前过合规评审。
+- 用重复交代的次数和删除率来衡量。
+
+> 16 个组件的判断卡放在一起比较，见 [选型篇](../guide/README.md)。
+
+---
+
+## 接下来
+
+记忆解决了跨会话记住信息的问题。但复杂任务还要记录每一步做到哪了、谁在做、要等谁。只靠对话里的待办清单，程序一退出就接不上。
+
+s10 任务板（Task System）→ 把任务、状态和先后关系写到硬盘上。

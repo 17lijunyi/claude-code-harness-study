@@ -1,39 +1,52 @@
-# s12: Cron Scheduler — Start Work on a Schedule
-
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md)
+# s12: Cron Scheduler — 按时间启动任务
 
 s01 → ... → s10 → s11 → `s12` → [s13](../s13_agent_teams/) → ... → s17
 
 ---
 
-## The Problem
+## 本章要学会的判断
 
-S11 changes how a command runs after it starts: a long Bash command can run in the background. It does not record when future work should start, and no component keeps checking the current time.
+- **它解决什么**：到点自动做事：日报、巡检、提醒，不用等人来问。
+- **什么时候需要它**：要按时间主动做事，而不是等用户发起。
+- **你要拍板的规则**：谁能设定时任务；频率上限；到期是否自动停止；没人盯着时允许做哪些事（通常要更严）。
 
-For requests such as "run tests every morning at 9am" or "check CI status every 30 minutes," the user would still have to submit the prompt again at each scheduled time. The Harness needs to store the schedule, put the corresponding prompt into a pending queue when it becomes due, and deliver it to the Agent Loop when the Agent is idle.
+> 代码看不懂可以先跳过，到网页上看「回放」动画。详细的判断方法在本章末尾的「产品经理视角」。
 
----
+### 本章新词
 
-## The Solution
+每章最多三个新词。看不懂的其他词，去[名词表](../guide/glossary.md)查。
 
-![Cron Scheduler Overview](images/cron-scheduler-overview.en.svg)
-
-Suppose the Agent registers this job:
-
-```text
-cron:   0 9 * * *
-prompt: run tests
-```
-
-At 09:00 local time, the scheduler thread matches the job and puts `[Scheduled] run tests` into `cron_queue`. The queue processor waits until the Agent is idle, then starts an Agent Loop turn. The model can then call Bash to run the tests.
-
-The S12 code keeps the five base tools and Hooks from S04, then adds `schedule_cron`, `list_crons`, and `cancel_cron`. It does not include S11 background commands because this chapter delivers a prompt to start work, not the result of a command that is already running.
+| 词 | 意思 | 比喻 |
+|---|---|---|
+| 定时任务 | 到某个时间自动做的一件事 | 每天早上七点的闹钟 |
+| 调度线程 | 每秒看一眼表、到点就把任务放进队列的小工 | 盯着钟的门卫 |
+| 五段式时间 | 分、时、日、月、星期五个格子，* 表示「每」 | 日历上圈出的时间 |
 
 ---
 
-## How It Works
+## 问题
 
-### What CronJob stores
+s11 解决的是命令开始之后怎么跑：慢命令可以放后台。但它不记录某件事应该在什么时间开始，也没有谁在持续看表。
+
+「每天早上 9 点跑测试」「每 30 分钟看一次构建状态」这类要求，如果只靠现在的循环，还是得你每次到点自己来说一句。程序得记住时间，到点把要做的事放进队列，等 Agent 空闲时交给它。
+
+---
+
+## 解决方案
+
+![Cron Scheduler Overview](images/cron-scheduler-overview.svg)
+
+假设 Agent 登记了一条：每天 9 点，做「跑测试」。
+
+调度线程每秒看一次表，到了 9 点就把「跑测试」放进待送队列。另一条线程等 Agent 空闲后，把它当成一条用户消息送进记录本，开始新的一圈，模型照常用工具去跑测试。
+
+本章在 s04 的五个基础工具和钩子之上，加了「登记、查看、取消定时任务」三个工具。要长期有效的任务存进文件，程序重启后还在；但程序一关，定时就停，它不是系统级的闹钟。
+
+---
+
+## 工作原理
+
+### CronJob 保存什么
 
 ```python
 @dataclass
@@ -47,23 +60,23 @@ class CronJob:
     last_fired: str | None = None
 ```
 
-`cron` controls when the job becomes due. `prompt` is the task sent to the Agent. `pending_delivery` marks a due job that the model has not accepted, while `last_fired` prevents another enqueue in the same minute.
+`cron` 决定何时触发，`prompt` 是触发后交给 Agent 的任务。`pending_delivery` 表示任务已经到期但尚未被模型接收，`last_fired` 防止同一分钟重复入队。
 
-### Five-field cron expressions
+### 五段式 Cron 表达式
 
 ```text
-minute hour day month weekday
-   *     *    *    *      *    every minute
-   0     9    *    *      *    every day at 09:00
-  */5    *    *    *      *    every 5 minutes
-   0     9    *    *     1-5   weekdays at 09:00
+分钟  小时  日  月  星期
+  *    *   *   *   *      每分钟
+  0    9   *   *   *      每天 09:00
+ */5   *   *   *   *      每 5 分钟
+  0    9   *   *  1-5     工作日 09:00
 ```
 
-This chapter supports `*`, `*/N`, `N`, `N-M`, and `N,M,...`. Before saving a job, `schedule_job()` calls `validate_cron()` and rejects expressions with the wrong number of fields or out-of-range values.
+本章支持 `*`、`*/N`、`N`、`N-M` 和 `N,M,...`。`schedule_job()` 会在保存任务前调用 `validate_cron()`，拒绝字段数量或取值范围不正确的表达式。
 
-### Enqueue when due
+### 到期后先入队
 
-The scheduler thread reads local time once per second. When an expression matches and the job has not fired in the current minute, `_enqueue_due_job()` saves `pending_delivery` and `last_fired` before adding the job to the in-memory queue:
+调度线程每秒读取一次本地时间。表达式匹配且任务在当前分钟尚未触发时，`_enqueue_due_job()` 先保存 `pending_delivery` 和 `last_fired`，再把任务放进内存队列：
 
 ```python
 def poll_due_jobs(moment: datetime):
@@ -76,11 +89,11 @@ def poll_due_jobs(moment: datetime):
                 _enqueue_due_job(job, minute_marker)
 ```
 
-If persistence fails, `_enqueue_due_job()` restores the previous state and does not expose a memory-only delivery to the queue processor.
+持久化失败时，`_enqueue_due_job()` 会恢复原来的状态，不会把只存在于内存中的任务暴露给队列处理线程。
 
-### Deliver when the Agent is idle
+### Agent 空闲后再交付
 
-`queue_processor_loop()` does not check the time. It checks the queue, and `agent_lock` prevents a scheduled turn from changing the session while a user turn is running:
+`queue_processor_loop()` 不负责判断时间。它只检查队列，并用 `agent_lock` 避免定时任务与用户正在进行的回合同时修改会话：
 
 ```python
 def queue_processor_loop(stop_event=RUNTIME_STOP):
@@ -94,7 +107,7 @@ def queue_processor_loop(stop_event=RUNTIME_STOP):
             agent_lock.release()
 ```
 
-The Agent Loop takes due jobs from the queue and appends each one as a new user message:
+Agent Loop 从队列取出到期任务，并把它们作为新的用户消息追加：
 
 ```python
 fired = consume_cron_queue()
@@ -102,52 +115,108 @@ for job in fired:
     messages.append({"role": "user", "content": f"[Scheduled] {job.prompt}"})
 ```
 
-If the model call fails, those messages are removed from the current session and the jobs return to the queue. Once the model accepts the call, one-shot jobs are removed and recurring jobs clear `pending_delivery` until the next match.
+模型调用失败时，这些消息会从当前会话中移除，任务重新放回队列。模型成功接收后，一次性任务会被删除，周期任务则清除 `pending_delivery`，等待下一次匹配。
 
-### Persistence boundary
+### 持久化边界
 
-| Mode | Stored in | After a process restart |
+| 模式 | 保存位置 | 进程重启后 |
 |---|---|---|
-| `durable=True` | `.scheduled_tasks.json` | Loaded again |
-| `durable=False` | Memory | Gone |
+| `durable=True` | `.scheduled_tasks.json` | 重新加载 |
+| `durable=False` | 内存 | 消失 |
 
-The code updates `.scheduled_tasks.json` through a temporary file and `os.replace()`. If the file is corrupt, startup reports the error instead of ignoring it.
+`.scheduled_tasks.json` 使用临时文件和 `os.replace()` 更新。文件损坏时，启动日志会报告错误，不会静默忽略。
 
-Delivery is at least once. If the process exits after the model accepts a prompt but before the acknowledgement reaches disk, the same job may be delivered again after restart.
+这里采用至少一次交付：进程若在模型接收 prompt 后、确认状态写回前退出，同一任务可能在重启后再次交付。
 
-### Runtime boundary
+### 运行边界
 
-- The scheduler uses the Agent process's local time.
-- The scheduler stops when the Agent process exits. `durable` preserves the job definition only.
-- Restart loads saved jobs but does not replay schedule times missed while the process was down.
-- Scheduled turns run in the queue processor thread. A tool call that needs interactive approval is denied instead of competing with the main terminal for input.
-- Scheduler and queue processor threads start only in the CLI. Importing `code.py` starts no background thread.
+- 调度器使用 Agent 进程的本地时间。
+- Agent 进程关闭后，调度线程也会停止；`durable` 只保留任务定义。
+- 重启时只恢复任务，不补跑停机期间错过的时间点。
+- 定时回合运行在队列处理线程中。需要交互确认的工具调用会被拒绝，不会与主终端同时读取输入。
+- 调度线程和队列处理线程只在运行 CLI 时启动，导入 `code.py` 不会启动后台线程。
 
-Use crontab, a systemd timer, or an external scheduler when jobs must run while the Agent is closed.
+需要在 Agent 关闭时仍按时执行任务，应使用系统的 crontab、systemd timer 或其他外部调度服务。
 
 ---
 
-## Try It
+## 试一下
 
 ```sh
-cd learn-claude-code
+cd claude-code-harness-study
 python s12_cron_scheduler/code.py
 ```
 
-Enter these prompts in order:
+试试这些话：
 
-1. `Schedule "run date" every 2 minutes and keep it after restart.`
-2. `List all cron jobs.`
-3. `Cancel the cron job you just created.`
+1. `每 2 分钟执行一次「显示当前时间」，重启后也要保留`
+2. `列出所有定时任务`
+3. `取消刚才建的那条定时任务`
 
-You can inspect `.scheduled_tasks.json` and watch for the `[Scheduled] run date` message when the job becomes due. Keep the Agent process running while testing a minute-level schedule.
+观察重点：项目目录下的 .scheduled_tasks.json 里是不是多了一条？到点后屏幕上会出现「[定时] 已送达」和模型的回应。测试分钟级的任务时，程序要一直开着。
 
 ---
 
-## What's Next
+## 产品经理视角
 
-The scheduler can start an Agent Loop turn at a specified time, but one Agent still handles that turn. When a task requires parallel investigation, changes across multiple modules, and a combined result, the Harness also needs to assign work to multiple Agents and collect what each one produces.
+> 定时让 Agent 从「你问它答」变成「到点主动做」，也意味着它会在没人盯着的时候干活。所以无人值守时的规则，要比平时更严。
 
-s13 Agent Teams → A Lead assigns tasks, teammates run independently, and results return through inboxes.
+### 什么信号说明需要它
 
-<!-- translation-sync: zh@v9, en@v9, ja@v9 -->
+- 用户需要周期性的事：每天早上的日报、每周巡检、到期提醒。
+- 用户反复在固定的时间发同样的请求。
+
+### 代价
+
+- **出错没人发现**：无人值守，出了错可能很久才被发现。
+- **越积越多**：定时任务越来越多，费用悄悄上涨，推送太多也会打扰用户。
+- **细节很多**：时区、节假日、什么时候停止，都要处理。
+- **要一直开着**：本章的实现要求程序一直运行；真实产品需要稳定运行的后台服务。
+
+### 先试试更便宜的办法
+
+- 很多「定时」需求其实不需要 Agent 循环：用普通的定时器，每天调用一次模型生成摘要就够了。
+- 让用户手动触发，提供「一键重复上次请求」。
+
+### 你要拍板的规则
+
+| 规则 | 示例 |
+|---|---|
+| 谁能设定时任务 | 用户自己设；管理员可以统一设 |
+| 频率和数量上限 | 最短每小时一次；每个用户最多 10 个 |
+| 自动停止 | 默认 30 天后停止，到期前提醒用户续期 |
+| 无人值守时能做什么 | 只能读数据、生成报告；不允许付款、对外发消息、删除 |
+| 结果发到哪 | 推送到指定渠道；长期没人看的，提醒用户关掉 |
+
+### 怎么衡量
+
+- 定时任务的执行成功率。
+- 结果的打开率：长期没人看，说明可以停掉了。
+- 定时任务的费用占总费用的比例。
+
+### 真实产品里的样子
+
+- ChatGPT 的「定时任务」功能让用户设置提醒和周期性任务，到点自动运行，并限制了同时存在的任务数量。
+- Dify 可以按时间触发工作流（见选型篇的对照表）。
+
+### 面试题
+
+**「设计一个每天早上给销售推送客户动态的 Agent，要注意什么？」**
+
+答题要点：
+
+- 先问需不需要 Agent：格式固定的摘要，可能调用一次模型就够了。
+- 无人值守时只给只读权限。
+- 控制推送频率，避免打扰。
+- 失败要有通知；任务要有到期机制。
+- 用打开率衡量值不值得继续推。
+
+> 16 个组件的判断卡放在一起比较，见 [选型篇](../guide/README.md)。
+
+---
+
+## 接下来
+
+闹钟能在指定时间开始新的一圈，但这一圈还是一个 Agent 在干。要同时调查好几个模块、并行修改再汇总，就得把活分给多个 Agent，再把各自的结果收回来。
+
+s13 团队（Agent Teams）→ 主控分任务，队友各自干，结果通过信箱送回来。

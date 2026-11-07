@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
-import shlex
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -303,7 +302,7 @@ def test_impossible_goal_is_recorded_as_failed() -> None:
         assert decision.action == "failed"
         assert controller.active is None
         assert controller.last_status["failed"] is True
-        assert controller.status().startswith("Goal failed:")
+        assert controller.status().startswith("目标无法达成：")
 
     asyncio.run(scenario())
 
@@ -434,7 +433,7 @@ def test_bash_output_keeps_exit_code_when_the_tail_is_trimmed(
         "bash",
         {
             "command": (
-                f"{shlex.quote(sys.executable)} -c \"import sys; "
+                f"'{sys.executable}' -c \"import sys; "
                 "print('x' * 40000); sys.exit(7)\""
             )
         },
@@ -498,7 +497,7 @@ def test_goal_loop_keeps_the_s04_base_tools_and_permission_hook(
         name="write_file",
         input={"path": "../outside.txt", "content": "blocked"},
     )
-    assert "outside" in session.trigger_hooks("PreToolUse", block)
+    assert "以外" in session.trigger_hooks("PreToolUse", block)
     assert not (tmp_path.parent / "outside.txt").exists()
 
 
@@ -511,10 +510,10 @@ def test_goal_loop_file_tools_use_the_current_repository(tmp_path: Path) -> None
         workdir=tmp_path,
     )
 
-    assert "Wrote" in session._run_tool(
+    assert "已写入" in session._run_tool(
         "write_file", {"path": "src/value.txt", "content": "old"}
     )
-    assert "Edited" in session._run_tool(
+    assert "已修改" in session._run_tool(
         "edit_file",
         {"path": "src/value.txt", "old_text": "old", "new_text": "new"},
     )

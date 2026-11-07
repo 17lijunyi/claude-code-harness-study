@@ -1,55 +1,71 @@
-# s10: Task System — From an Execution Checklist to Coordinated Task State
-
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md)
+# s10: Task System — 从执行清单到可协调的任务状态
 
 s01 → ... → s08 → s09 → `s10` → [s11](../s11_background_tasks/) → s12 → ... → s16 → s17
 
-> *"Break big goals into small tasks, order them, persist"* — File-persisted task graph, the foundation for multi-agent collaboration.
+> *"大目标拆成小任务, 排好序, 持久化"* — 文件持久化的任务图, 多 agent 协作的基础。
 >
-> **Harness Layer**: Tasks — Persisted goals, recoverable progress.
+> **Harness 层**: 任务 — 持久化的目标, 可恢复的进度。
 
 ---
 
-## The Problem
+## 本章要学会的判断
 
-s05's TodoWrite lets an agent record the steps of its current task. Each checklist item has content and a status, helping the agent keep track of what remains.
+- **它解决什么**：把大目标拆成有先后顺序的任务，存下来，跨会话、跨人继续推进。
+- **什么时候需要它**：一个目标要分很多步、做好几天、多人接力，还要能看进度。
+- **你要拍板的规则**：任务拆多细；谁能建、认领、关闭任务；卡住多久升级给人。
 
-When a project is split into three tasks—creating database tables, writing an API, and adding tests—the Harness also needs to know how they relate: the API must wait for the database tables, and the tests must wait for a stable API. It also needs to record who is responsible for each task.
+> 代码看不懂可以先跳过，到网页上看「回放」动画。详细的判断方法在本章末尾的「产品经理视角」。
 
-TodoWrite does not record these dependencies or assignments. It can show that "write the API" is unfinished, but the Harness cannot use that information to decide whether the task is ready to start.
+### 本章新词
 
-This chapter adds a Task System. Each task has its own ID and status; `blockedBy` records prerequisites, and `owner` records the agent responsible for the task.
+每章最多三个新词。看不懂的其他词，去[名词表](../guide/glossary.md)查。
 
----
-
-## The Solution
-
-![Task System Overview](images/task-system-overview.en.svg)
-
-The code keeps S04's five base tools, Permission, Hooks, and shared `execute_tool`, then adds 6 task tools, persistence in the `.tasks/` directory, and `blockedBy` dependency checks.
-
-TodoWrite vs Task System:
-
-| | TodoWrite (s05) | Task System (s10) |
+| 词 | 意思 | 比喻 |
 |---|---|---|
-| Role | Execution checklist for the current task | Recoverable task system |
-| Storage | In-process / session state | `.tasks/{id}.json` |
-| Dependencies | None | `blockedBy` dependency graph |
-| Lifecycle | Current session / current task | Cross-session |
-| Coordination | No task claiming | `owner` / claim |
-| Status | pending / in_progress / completed | pending / in_progress / completed |
-| Granularity | The agent's own steps | Tasks that can be claimed, tracked, and unblocked |
-| Update contract | Replace the whole checklist | Create/get/update/list individual records |
+| 任务板 | 写在硬盘上的任务卡片，每张有状态、前置和负责人 | 墙上的看板 |
+| 前置 | 这个任务要等哪些任务先完成 | 先打地基，再砌墙 |
+| 认领 | 一个 Agent 把一张待处理的卡片标成自己在做 | 把看板上的卡片拖到自己名下 |
 
 ---
 
-## How It Works
+## 问题
 
-![Task DAG](images/task-dag.en.svg)
+s05 的待办清单记的是当前任务的步骤，每一项只有内容和状态，用来提醒 Agent 接下来还要做什么。
 
-### Task: Data Structure
+当一个项目被拆成「搭数据库表」「写接口」「加测试」三个任务时，程序还得知道它们之间的关系：数据库表搭好才能写接口，接口定了才能加测试。每个任务还得记下由谁负责。
 
-Each task is a JSON file, stored in the `.tasks/` directory:
+待办清单没有这些信息。它能显示「写接口」还没完成，但程序没法据此判断这个任务现在能不能开始。
+
+本章加一块任务板。每个任务有自己的编号和状态，记着要等哪些前置任务，也记着负责人是谁。
+
+---
+
+## 解决方案
+
+![Task System Overview](images/task-system-overview.svg)
+
+s04 的五个基础工具、权限、钩子全部保留，再加 6 个任务工具（建任务、加前置、列任务、看任务、认领、完成）、一个写在硬盘上的任务文件夹，以及认领前的前置检查。
+
+待办清单和任务板的区别：
+
+| | 待办清单（s05） | 任务板（s10） |
+|---|---|---|
+| 定位 | 当前任务的步骤 | 可以接着推进的正式账本 |
+| 存在哪 | 程序内存里，退出就没了 | 硬盘上，每个任务一个文件 |
+| 先后关系 | 没有 | 每张卡记着要等谁 |
+| 活多久 | 这一次会话 | 跨会话一直在 |
+| 分工 | 不管谁做 | 有负责人，要先认领 |
+| 怎么改 | 整张清单一起换 | 一张一张卡片建、读、改 |
+
+---
+
+## 工作原理
+
+![Task DAG](images/task-dag.svg)
+
+### Task: 数据结构
+
+每个任务是一个 JSON 文件，存于 `.tasks/` 目录：
 
 ```python
 @dataclass
@@ -58,48 +74,48 @@ class Task:
     subject: str
     description: str
     status: str          # pending | in_progress | completed
-    owner: str | None    # Agent responsible for this task
-    blockedBy: list[str] # List of dependency task IDs
+    owner: str | None    # 负责当前任务的 Agent
+    blockedBy: list[str] # 依赖的任务 ID 列表
 ```
 
-IDs use the `task_` prefix followed by 8 random hexadecimal characters. Files are created exclusively; an existing ID is discarded and regenerated.
+ID 使用 `task_` 加 8 位随机十六进制字符生成。创建文件时使用排他写入；如果 ID 已存在，就重新生成。
 
-`TaskStore` validates task IDs and reads and writes the JSON files. `TASKS = TaskStore(TASKS_DIR)` is the store used by this chapter.
+`TaskStore` 负责校验任务 ID 和读写 JSON 文件，`TASKS = TaskStore(TASKS_DIR)` 是本章使用的任务存储。
 
-### create_task: Create Tasks
+### create_task: 创建任务
 
 ```python
 def create_task(subject: str, description: str = "") -> Task:
     return TASKS.create(subject, description)
 ```
 
-`TaskStore.create` checks the subject, allocates a random ID, and writes `.tasks/{id}.json`. A new task always starts with an empty `blockedBy` list. The tool result returns the runtime-generated ID to the model.
+`TaskStore.create` 检查 subject，分配随机 ID，再把任务写入 `.tasks/{id}.json`。新任务的 `blockedBy` 固定为空，工具结果会把运行时生成的 ID 返回给模型。
 
-### update_task: Add Dependencies with Returned IDs
+### update_task: 使用返回的 ID 添加依赖
 
 ```python
 def update_task(task_id: str, addBlockedBy: list[str]) -> Task:
     return TASKS.update_dependencies(task_id, addBlockedBy)
 ```
 
-Task graph construction uses two phases: create every node first, then call `update_task` with the IDs returned by `create_task` to add edges. This matters when the model emits several tool calls in one response: sibling calls are formed before any tool result exists, so one `create_task` call cannot consume another call's newly generated ID.
+任务图采用两阶段构建：先创建所有节点，再使用 `create_task` 返回的 ID 调用 `update_task` 添加边。模型可能在一条回复里同时发出多个工具调用，而这些同级调用在任何工具结果产生前就已经确定，因此某个 `create_task` 无法直接使用另一个调用刚生成的 ID。
 
-`update_task` validates the entire change before saving it. The target and dependencies must exist, the target must still be pending and unowned, and the new edges must not introduce self-dependencies or cycles. Repeating an existing edge is safe and does not duplicate it.
+`update_task` 会先校验整次修改，再统一保存。目标任务和依赖必须存在，目标必须仍为 pending 且无人认领，并且不能形成自依赖或环。重复添加已有依赖是安全的，不会产生重复边。
 
-### can_start: Dependency Check
+### can_start: 依赖检查
 
-A task can only start after all its `blockedBy` dependencies are **completed**:
+一个任务只能在它的 `blockedBy` **全部 completed** 之后才能开始：
 
 ```python
 def can_start(task_id: str) -> bool:
     return not incomplete_dependencies(load_task(task_id))
 ```
 
-`incomplete_dependencies` loads each prerequisite. A task cannot be claimed if any prerequisite is not completed or its file no longer exists.
+`incomplete_dependencies` 读取每个前置任务。只要有一个不是 completed，或者对应文件已经不存在，任务就不能认领。
 
-### claim_task: Claim a Task
+### claim_task: 认领任务
 
-When the agent starts working on a task, it calls `claim_task`: sets `owner`, changes status from `pending` → `in_progress`. The `owner` field records who claimed the task:
+Agent 开始做一个任务时，调用 `claim_task`：设置 `owner`，状态从 `pending` → `in_progress`。`owner` 字段记录谁认领了这个任务：
 
 ```python
 def claim_task(task_id: str, owner: str = "agent") -> str:
@@ -115,11 +131,11 @@ def claim_task(task_id: str, owner: str = "agent") -> str:
     return f"Claimed {task_id} ({task.subject})"
 ```
 
-The claim is rejected if the task is not pending or its dependencies are incomplete. S10 only updates task state sequentially.
+如果任务不是 pending，或者依赖没有完成，就拒绝认领。S10 只处理顺序执行的状态更新。
 
-### complete_task: Complete and Unblock
+### complete_task: 完成与解锁
 
-When a task is done, set it to `completed`. Simultaneously scan all other tasks to find downstream tasks that were **just unblocked**:
+任务做完后，设为 `completed`。同时扫描所有其他任务，找出**刚刚被解锁**的下游任务：
 
 ```python
 def complete_task(task_id: str, owner: str = "agent") -> str:
@@ -143,11 +159,11 @@ def complete_task(task_id: str, owner: str = "agent") -> str:
     return msg
 ```
 
-After completing "schema", `can_start` returns True for "endpoints" and "docs"; they can begin.
+完成 "schema" 后，"endpoints" 和 "docs" 的 `can_start` 返回 True，它们可以开始。
 
-### get_task: View Full Details
+### get_task: 查看完整细节
 
-`list_tasks` only shows a one-line summary. `get_task` returns the full task JSON, including description and dependency details. When recovering across sessions, the agent needs to read the full description to continue work:
+`list_tasks` 只显示一行摘要。`get_task` 返回完整的任务 JSON，包括 description 和依赖细节。跨会话恢复时，Agent 需要读取完整描述才能继续工作：
 
 ```python
 def get_task(task_id: str) -> str:
@@ -155,72 +171,127 @@ def get_task(task_id: str) -> str:
     return json.dumps(asdict(task), indent=2)
 ```
 
-### State Machine: Two Actions, Three States
+### 状态机: 两个动作，三个状态
 
 ```
 pending ──claim──→ in_progress ──complete──→ completed
 ```
 
-Here `claim` / `complete` are actions, while `pending` / `in_progress` / `completed` are states:
+这里的 `claim` / `complete` 是动作，`pending` / `in_progress` / `completed` 是状态：
 
-- **claim_task**: `pending` → `in_progress`. Sets owner, begins work.
-- **complete_task**: `in_progress` → `completed`. Marks the task done and unblocks downstream.
+- **claim_task**: `pending` → `in_progress`。设置 owner，开始工作。
+- **complete_task**: `in_progress` → `completed`。把任务标记为完成，并解锁下游。
 
-### Putting It Together
+### 合起来跑
 
 ```python
-# Phase 1: create every node and receive its runtime ID
+# 第一阶段：创建所有节点并取得运行时 ID
 schema = create_task("setup database schema")
 endpoints = create_task("create API endpoints")
 tests = create_task("write tests")
 docs = create_task("write docs")
 
-# Phase 2: add edges using those returned IDs
+# 第二阶段：使用返回的 ID 建立依赖边
 update_task(endpoints.id, addBlockedBy=[schema.id])
 update_task(tests.id, addBlockedBy=[endpoints.id])
 update_task(docs.id, addBlockedBy=[schema.id])
 
-# Agent claims the first available task
-claim_task(schema.id)       # ✓ Claimed (no dependencies)
-complete_task(schema.id)    # ✓ Completed → unblocks endpoints, docs
+# Agent 认领第一个可做的任务
+claim_task(schema.id)       # ✓ Claimed (无依赖)
+complete_task(schema.id)    # ✓ Completed → 解锁 endpoints, docs
 
-claim_task(endpoints.id)    # ✓ Claimed (schema completed)
-complete_task(endpoints.id) # ✓ Completed → unblocks tests
+claim_task(endpoints.id)    # ✓ Claimed (schema 已完成)
+complete_task(endpoints.id) # ✓ Completed → 解锁 tests
 
-claim_task(docs.id)         # ✓ Claimed (schema completed)
+claim_task(docs.id)         # ✓ Claimed (schema 已完成)
 complete_task(docs.id)      # ✓ Completed
 
-claim_task(tests.id)        # ✓ Claimed (endpoints completed)
+claim_task(tests.id)        # ✓ Claimed (endpoints 已完成)
 complete_task(tests.id)     # ✓ Completed
 ```
 
-Each `create_task` writes a JSON file; `update_task`, `claim_task`, and `complete_task` update it. Across sessions, the `.tasks/` directory persists — the agent reads the files to recover progress.
+每个 `create_task` 写一个 JSON 文件，`update_task`、`claim_task` 和 `complete_task` 更新文件。跨会话时，`.tasks/` 目录还在，Agent 读文件就能恢复进度。
 
 ---
 
-## Try It
+## 试一下
 
 ```sh
-cd learn-claude-code
+cd claude-code-harness-study
 python s10_task_system/code.py
 ```
 
-Try these prompts:
+试试这些话：
 
-1. `Create tasks: setup database schema, create API endpoints (depends on schema), write tests (depends on endpoints), write docs (depends on schema)`
-2. `List all tasks and their statuses`
-3. `Claim the first unblocked task and complete it`
-4. `List tasks again — which ones are now unblocked?`
+1. `建四个任务：搭数据库表；写接口，要等数据库表；写测试，要等接口；写文档，要等数据库表`
+2. `列出所有任务和状态`
+3. `认领第一个可以开始的任务，并完成它`
+4. `再列一次任务，哪些现在可以开始了？`
 
-What to observe: Are JSON files generated in the `.tasks/` directory? After completing a task, are the blocked tasks unblocked?
+观察重点：.tasks 文件夹里是不是每个任务一个文件？完成一个任务后，等它的那些任务有没有解锁？
 
 ---
 
-## What's Next
+## 产品经理视角
 
-The task graph is in place, but full test suites, dependency installation, and deployment commands can take a long time. When these commands run synchronously, the Agent Loop remains blocked in the current tool call and cannot continue until the command finishes.
+> 待办清单（s05）是 Agent 记在自己脑子里的计划；任务板是挂在墙上的看板，有先后顺序、有负责人，跨会话、跨人都能接着推进。
 
-s11 Background Tasks → Slow operations run in the background. The Agent Loop can continue processing other tasks and receives a notification when the background work finishes.
+### 什么信号说明需要它
 
+- 一个目标要拆成多个有先后顺序的任务，比如先建好表，才能写接口。
+- 工作要跨天、跨会话推进，中途断了要能接上。
+- 多个 Agent 或多个人要分工，需要知道谁在做什么。
+- 需要给用户或管理者看整体进度。
 
-<!-- translation-sync: zh@v5, en@v5, ja@v5 -->
+### 代价
+
+- **要维护状态**：要处理卡住的任务、没人认领的任务、已经过期的任务。
+- **拆得太细反而累**：管理任务的成本可能超过收益。
+- **几乎要自研**：现成方案很少自带（见选型篇的对照表）。
+
+### 先试试更便宜的办法
+
+- 待办清单（s05）够用，就不要上任务板。
+- 直接用团队已有的项目管理工具（Jira、飞书项目等），通过 MCP（s14）让 Agent 去读写里面的任务。
+
+### 你要拍板的规则
+
+| 规则 | 示例 |
+|---|---|
+| 任务拆多细 | 每个任务半天之内能完成 |
+| 谁能建、认领、关闭 | Agent 可以建任务、认领任务；关闭要等验证通过 |
+| 前后顺序 | 有前置任务的，前置任务完成之前不能开始 |
+| 卡住多久要上报 | 超过 1 天没有进展，通知负责人 |
+
+### 怎么衡量
+
+- 任务按时完成率。
+- 卡住的任务数量、平均卡了多久。
+- 中途断了以后，能不能顺利接着做。
+
+### 真实产品里的样子
+
+- Kiro 会先把需求拆成一份任务清单，每个任务都对应到某条需求，用户可以一个个让 Agent 去执行。
+- 很多团队不自建任务板，而是让 Agent 直接读写 Jira、Linear、飞书项目里的任务。
+
+### 面试题
+
+**「待办清单和任务板有什么区别？什么时候需要任务板？」**
+
+答题要点：
+
+- 区别一：待办清单只在一次会话里有效；任务板会保存下来，下次还在。
+- 区别二：待办清单只有「做没做完」；任务板还有前后顺序和负责人。
+- 区别三：待办清单是 Agent 自己用的；任务板是多方一起看、一起用的。
+- 需要任务板的情况：跨会话推进、多人或多个 Agent 协作、需要看整体进度。
+- 能接现有的项目管理工具，就不要自己造。
+
+> 16 个组件的判断卡放在一起比较，见 [选型篇](../guide/README.md)。
+
+---
+
+## 接下来
+
+任务板有了。但跑全部测试、安装依赖、部署这类命令可能要等很久。当场执行的话，循环就停在那一步，命令跑完才能继续干别的。
+
+s11 后台任务（Background Tasks）→ 把慢操作放到后台。Agent 继续处理别的事，后台跑完再收通知。

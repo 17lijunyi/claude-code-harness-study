@@ -46,11 +46,11 @@ def load_course_module(module_name: str, module_path: Path, temp_cwd: Path):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {module_path}")
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
 
     sys.modules["anthropic"] = fake_anthropic
     sys.modules["dotenv"] = fake_dotenv
     sys.modules["yaml"] = fake_yaml
+    sys.modules[spec.name] = module
     try:
         os.chdir(temp_cwd)
         os.environ["MODEL_ID"] = "test-model"
@@ -58,6 +58,7 @@ def load_course_module(module_name: str, module_path: Path, temp_cwd: Path):
         return module
     finally:
         os.chdir(previous_cwd)
+        sys.modules.pop(spec.name, None)
         if previous_model_id is None:
             os.environ.pop("MODEL_ID", None)
         else:

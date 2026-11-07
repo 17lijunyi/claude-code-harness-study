@@ -65,7 +65,6 @@ def load_lesson(temp_cwd: Path, lesson_path: Path = LESSON):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {lesson_path}")
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
 
     sys.modules["anthropic"] = fake_anthropic
     sys.modules["dotenv"] = fake_dotenv
@@ -470,7 +469,7 @@ class AgentTeamsRuntimeTests(unittest.TestCase):
                         f"os.environ['ANTHROPIC_API_KEY'] = 'test-key'\n"
                         f"spec = importlib.util.spec_from_file_location('lesson', {str(lesson_path)!r})\n"
                         "lesson = importlib.util.module_from_spec(spec)\n"
-                        "sys.modules[spec.name] = lesson\n"
+                        "sys.modules['lesson'] = lesson\n"
                         "spec.loader.exec_module(lesson)\n"
                         f"lesson.run_bash({command!r}, run_in_background=True)\n"
                         "time.sleep(10)\n"
@@ -637,7 +636,7 @@ class AgentTeamsRuntimeTests(unittest.TestCase):
                     with patch("builtins.input", return_value="no"):
                         self.assertEqual(
                             lesson.permission_hook(trigger),
-                            "Permission denied by user",
+                            "权限被拒绝：用户不允许",
                         )
 
                     spoofed = types.SimpleNamespace(
@@ -647,7 +646,7 @@ class AgentTeamsRuntimeTests(unittest.TestCase):
                     with patch("builtins.input", return_value="no"):
                         self.assertEqual(
                             lesson.permission_hook(spoofed),
-                            "Permission denied by user",
+                            "权限被拒绝：用户不允许",
                         )
 
     def test_integrated_permission_requires_approval_for_every_shell_command(self):
@@ -665,7 +664,7 @@ class AgentTeamsRuntimeTests(unittest.TestCase):
                 with patch("builtins.input", return_value="no"):
                     self.assertEqual(
                         lesson.permission_hook(block),
-                        "Permission denied by user",
+                        "权限被拒绝：用户不允许",
                     )
                 self.assertFalse(outside.exists())
             finally:
@@ -1552,7 +1551,7 @@ class AgentTeamsRuntimeTests(unittest.TestCase):
                         "Completed", lesson.complete_task(first.id, owner="agent")
                     )
                     self.assertIn(
-                        "Wrote",
+                        "已写入",
                         lesson.run_agent_write("after-complete.txt", "done"),
                     )
                     self.assertTrue(
@@ -1607,7 +1606,7 @@ class AgentTeamsRuntimeTests(unittest.TestCase):
                         "Completed", lesson.complete_task(task.id, owner="agent")
                     )
                     self.assertIn(
-                        "Wrote", lesson.run_agent_write("after.txt", "done")
+                        "已写入", lesson.run_agent_write("after.txt", "done")
                     )
                     self.assertTrue(
                         (lesson.WORKTREES_DIR / "auth" / "after.txt").exists()
@@ -1636,7 +1635,7 @@ class AgentTeamsRuntimeTests(unittest.TestCase):
                         first.complete_task(new_task.id, owner="agent"),
                     )
                     self.assertIn(
-                        "Wrote", first.run_agent_write("after.txt", "done")
+                        "已写入", first.run_agent_write("after.txt", "done")
                     )
                     self.assertTrue(
                         (first.WORKTREES_DIR / "new" / "after.txt").exists()
@@ -1820,7 +1819,7 @@ class AgentTeamsRuntimeTests(unittest.TestCase):
             self.assertEqual(assignment["task_id"], task.id)
             self.assertEqual(assignment["cwd"], worktree)
             self.assertIn(
-                "Wrote", lesson.run_write(
+                "已写入", lesson.run_write(
                     "nested/result.txt", "done", cwd=lesson.assignment_cwd("alice")
                 )
             )
@@ -1829,7 +1828,7 @@ class AgentTeamsRuntimeTests(unittest.TestCase):
             escaped = lesson.run_write(
                 "../outside.txt", "bad", cwd=lesson.assignment_cwd("alice")
             )
-            self.assertIn("escapes workspace", escaped)
+            self.assertIn("超出工作区", escaped)
             self.assertFalse((lesson.WORKTREES_DIR / "outside.txt").exists())
             missing_cwd = lesson.run_bash("pwd", cwd=worktree / "missing")
             self.assertIn("FileNotFoundError", missing_cwd)

@@ -1,49 +1,76 @@
-# s16: Workflow Runtime — The Model Decides Each Step; a Script Decides the Orchestration
-
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md)
+# s16: Workflow Runtime — 模型决定单步，脚本决定编排
 
 s01 → ... → s14 → [s15](../s15_integrated_harness/) → `s16` → [s17](../s17_goal_loop/)
 
-> *"One tool_use runs an entire orchestration"* — The `Workflow` tool starts a recoverable script runtime that coordinates many agent calls.
+> *"一次 tool_use，跑完一整套编排"* — `Workflow` 工具启动一个可恢复的脚本运行时，协调多次 agent 调用。
 >
-> **Harness layer**: Orchestration — run saved multi-agent scripts above the single-agent loop.
+> **Harness 层**: 编排 — 在单 agent 循环之上，执行保存好的多 agent 脚本。
 
 ---
 
-From s01 through s15, the model decides which tools to call in each round. Their results enter `messages[]`, and the model decides the next step from the updated context. This works well when the path depends on what the previous step discovers.
+## 本章要学会的判断
 
-Some tasks repeat a fixed sequence. A code review may inspect several dimensions concurrently, verify each finding, combine duplicates, and sort the result. The sequence and dependencies are known before execution. Here the host needs three things:
+- **它解决什么**：流程固定时，把步骤写成脚本，每次都一样、可以审计、中断后能接着跑。
+- **什么时候需要它**：审核流程、批量处理这类事先就知道步骤的任务。
+- **你要拍板的规则**：哪些步骤必须固定、哪些交给模型；失败后怎么重跑。
+- **和 s15 的关系**：本章往 s15 总装好的系统里再加一个「工作流」工具，所以排在总装之后。
 
-- **Parallelism**, rather than waiting for one item at a time;
-- **A stable result structure**, even when individual agent answers vary;
-- **Recoverability**, so an interruption does not rerun work that is already complete.
+> 代码看不懂可以先跳过，到网页上看「回放」动画。详细的判断方法在本章末尾的「产品经理视角」。
 
-If this orchestration exists only in conversation history, its ordering and checkpoints also exist only in that history. A saved workflow puts the fixed sequence in code and records completed calls in a journal.
+### 本章新词
 
-## Put the Plan in Code, Not in a Sequence of Chat Turns
+每章最多三个新词。看不懂的其他词，去[名词表](../guide/glossary.md)查。
 
-Add a `Workflow` tool to the harness tool pool. The host registers trusted scripts built from `agent()`, `parallel()`, `pipeline()`, and `phase()`. The model supplies only a saved workflow name, arguments, and an optional run ID to resume; it does not send executable code or metadata.
+| 词 | 意思 | 比喻 |
+|---|---|---|
+| 工作流 | 事先写好的固定步骤，一次调用跑完 | 工厂里的流水线 |
+| 续跑 | 中途断了，从断点接着跑，做过的不重做 | 游戏的存档点 |
+| 调用日志 | 每一步派出去的结果记在硬盘上，续跑时直接用 | 流水账 |
 
-The workflow enters the main loop as one `tool_use`. As the script runs, the runtime emits lifecycle and progress events and records every step in a journal on disk. When the script finishes, the call returns the launch envelope, result, and task state. Intermediate script results live in variables instead of taking space in conversation history. When restarted with `resume_from_run_id`, unchanged `agent()` calls hit the journal cache and reuse previous results.
+---
 
-![Workflow Runtime Overview](images/workflow-runtime-overview.svg)
+## 问题
+
+从 s01 到 s15，每一圈都由模型决定用哪些工具。工具结果写回记录本后，模型再看情况决定下一步。下一步取决于上一步发现了什么时，这种方式很合适。
+
+有些任务会重复一套固定流程。例如代码审查可以同时检查多个维度，再逐条验证发现、合并重复项并按严重程度排序。执行前已经知道步骤及其先后关系，这时宿主需要三样东西：
+
+- **并行**，别一个一个串着等；
+- **稳定的结果结构**，即使每个小 Agent 的回答会变化；
+- **可恢复**，跑到一半断了，已经做完的部分别从头再来。
+
+如果这套流程只存在于对话里，步骤顺序和检查点也只存在于对话里，下次又得重新凑。
+
+---
+
+## 解决方案
+
+![Workflow Runtime 总览](images/workflow-runtime-overview.svg)
+
+把固定流程写成一个脚本，登记成一个「工作流」工具。模型只需要点名跑哪个工作流、给参数；程序按脚本分阶段派活、并行执行，整轮跑完只回一条结果。每一步派出去的结果都记在硬盘上的调用日志里，中途断了可以续跑，做过的不重做、不花钱。
+
+## 计划写在代码里，不是靠聊天一轮轮凑
+
+在 harness 的工具池里加入一个 `Workflow` 工具。宿主注册由 `agent() / parallel() / pipeline() / phase()` 组成的可信脚本。模型只提供保存好的 workflow 名称、参数和可选的续跑 run ID，不会提交可执行代码或元数据。
+
+workflow 以一次 `tool_use` 进入主循环。脚本运行时，runtime 会发出生命周期和进度事件，并把每一步写进磁盘上的 journal。脚本结束后，这次调用返回启动信息、结果和任务状态。脚本里的中间结果存在变量里，不会塞进对话历史。下次用 `resume_from_run_id` 重启时，没改过的 `agent()` 会直接使用 journal 中的结果。
 
 ```python
-SAMPLE_META = {"name": "review-changes", "description": "Review code changes", "phases": ["Review", "Verify"]}
+SAMPLE_META = {"name": "review-changes", "description": "审查代码改动", "phases": ["Review", "Verify"]}
 
 async def sample_workflow(ctx, args):
     ctx.phase("Review")
-    results = await ctx.pipeline(DIMENSIONS, audit, verify)   # Each dimension independently runs audit → verify
+    results = await ctx.pipeline(DIMENSIONS, audit, verify)   # 每个维度独立走 审计 → 验证
     confirmed = [f for r in results if r for f in r["confirmed"]]
-    ctx.log(f"Confirmed {len(confirmed)} real issues")
+    ctx.log(f"确认了 {len(confirmed)} 个真实问题")
     return {"confirmed": confirmed}
 ```
 
-## The Workflow Tool: One Call, One Complete Run
+## Workflow 工具：一次调用，完成整次运行
 
-`Workflow` is added to the s15 host's existing tool pool. The user can request a saved workflow, or the model can select it when a task matches a known orchestration. The adapter resolves the name through the host-owned `WORKFLOWS` registry, then passes its trusted metadata and function to the runtime. The other s15 tools remain available in the same loop.
+`Workflow` 会加入 s15 宿主已有的工具池。用户可以要求运行一个保存好的 workflow，模型也可以在任务匹配已知编排时选择这个工具。适配器会用名称查询宿主管理的 `WORKFLOWS` registry，再把可信的元数据和函数交给运行时；s15 的其他工具仍在同一个循环里可用。
 
-The model-facing schema accepts `name`, `args`, and `resume_from_run_id`. Unknown names and malformed arguments become an error tool result instead of ending the host loop. The runtime then validates the registered metadata, checks permissions, registers a local workflow task, and emits `async_launched` before running the script. Progress events follow, then the final `task_notification`; the call returns JSON-safe launch information, result, and task state.
+模型可见的 schema 只接受 `name`、`args` 和 `resume_from_run_id`。名称未知或参数格式错误时，适配器会返回错误工具结果，不会让宿主循环退出。随后运行时校验已经注册的元数据、经过权限检查、注册本地 workflow 任务，并在执行脚本前发出 `async_launched`。进度事件和最终的 `task_notification` 随后到达；调用返回可写入 JSON 的启动信息、结果和任务状态。
 
 ```python
 WORKFLOW_TOOL = {
@@ -71,94 +98,94 @@ async def run_workflow(name, args=None, resume_from_run_id=None):
             "task": serialize_task(out["task"])}
 ```
 
-## Workflow Metadata: Validate Before Launch
+## Workflow 元数据：启动前先校验
 
-Each saved workflow registers trusted metadata with `name`, `description`, and optional `phases`. The runtime validates it before executing workflow code. `name` and `description` identify the task in the UI, while `phases` names groups in the progress display. These fields belong to the host registry, not to model input.
+每个保存好的 workflow 都会注册一份可信元数据，包含 `name`、`description` 和可选的 `phases`。运行时会在执行 workflow 代码前校验它：`name` 和 `description` 用来标识任务，`phases` 给进度显示分组命名。这些字段属于宿主 registry，不是模型输入。
 
-Invalid registration raises `WorkflowInputError` before launch. This is the same idea as validating cron expressions in s12: do not wait until execution to discover a bad saved workflow.
+注册内容不合法时，运行时会在启动前抛出 `WorkflowInputError`。这和 s12 校验 cron 表达式是一个思路：保存好的 workflow 有问题，就不要等到执行时才发现。
 
-Because the runtime uses `meta.name` in local artifact filenames, it also requires a 1-64 character safe slug containing letters, numbers, `.`, `_`, or `-`.
+运行时会把 `meta.name` 用在本地产物文件名中，因此还要求它是 1-64 个字符的安全 slug，只能包含字母、数字、`.`、`_`、`-`。
 
 ```python
 def validate_meta(meta):
     if not isinstance(meta, dict):
-        raise WorkflowInputError("meta must be an object literal")
+        raise WorkflowInputError("meta 必须是对象字面量")
     if not meta.get("name") or not meta.get("description"):
-        raise WorkflowInputError("meta requires name and description")
+        raise WorkflowInputError("meta 必须包含 name 和 description")
     if not isinstance(meta["name"], str) or not WORKFLOW_NAME_RE.fullmatch(meta["name"]):
-        raise WorkflowInputError("meta.name must be a safe 1-64 character slug")
+        raise WorkflowInputError("meta.name 必须是 1-64 字符的安全 slug")
     if "phases" in meta and (
         not isinstance(meta["phases"], list)
         or not all(isinstance(p, str) and p for p in meta["phases"])
     ):
-        raise WorkflowInputError("meta.phases must contain non-empty strings")
+        raise WorkflowInputError("meta.phases 必须包含非空字符串")
     return meta
 ```
 
-## Orchestration Primitives
+## 编排原语
 
-A script receives an `ExecutionState` exposing a small set of orchestration primitives. It does not read files or run shell commands directly. The default interactive mode connects `agent()` to the same real API client as the host, and each workflow agent reads only the content supplied through workflow arguments. `demo` and unit tests use `MockAgentRunner` so events and journal replay are repeatable.
+脚本收到一个只暴露少量编排原语的 `ExecutionState`，本身不直接读写文件，也不运行 shell。默认交互模式把 `agent()` 接到与宿主相同的真实 API client；每个子 agent 只读取 workflow 参数中提供的内容。`demo` 和单元测试使用 `MockAgentRunner`，便于重复观察事件和 journal。
 
-| Primitive | Purpose |
+| 原语 | 作用 |
 |------|------|
-| `agent(prompt, {schema, label, phase})` | Dispatch one subagent |
-| `parallel(thunks)` | **Barrier**: run every task concurrently and wait until all results return |
-| `pipeline(items, *stages)` | Run each item through stages **without a barrier**; finished items proceed immediately |
-| `phase(title)` | Mark the current progress phase and update the progress display |
-| `log(message)` | Emit a progress log line |
-| `workflow(name, args)` | Run a nested sub-workflow, one level only |
+| `agent(prompt, {schema, label, phase})` | 派一个子 agent 干活 |
+| `parallel(thunks)` | **等齐屏障**：所有任务并行跑完，一起等结果回来 |
+| `pipeline(items, *stages)` | 每个 item 分阶段跑，**不等齐**，跑完一个往下走一个 |
+| `phase(title)` | 标记当前进度阶段（更新进度条） |
+| `log(message)` | 打一行进度日志 |
+| `workflow(name, args)` | 嵌套子工作流（只支持一层） |
 
-Use `pipeline` when each item independently crosses the same stages. Item A may reach stage three while item B is still in stage one. Use `parallel` when the next step needs every result from the preceding group.
+每个 item 都要独立经过相同步骤时，可以使用 `pipeline`。item A 跑到第 3 阶段时，item B 可能还在第 1 阶段；下一步必须同时使用上一阶段全部结果时，再使用 `parallel` 等待所有调用完成。
 
 ```python
 async def pipeline(self, items, *stages):
     async def run_item(item, idx):
         value = item
-        for stage in stages:                       # Each item independently completes every stage
+        for stage in stages:                       # 每个 item 独立跑完所有 stage
             value = await stage(value, item, idx)
         return value
     return await asyncio.gather(*[run_item(it, i) for i, it in enumerate(items)])
 ```
 
-## Structured Output: Do Not Let Subagents Return Essays
+## 结构化输出：别让子 agent 回来写散文
 
-`agent({schema})` asks a workflow agent to return only a JSON object matching the schema. The runtime parses and validates the result, then retries once if it does not match. Downstream code receives an object instead of extracting fields from prose.
+`agent({schema})` 会要求子 agent 只返回匹配 schema 的 JSON 对象。运行时解析并校验结果，不符合时重试一次。这样下游代码拿到的是对象，不必再从自然语言中提取字段。
 
-s05 warned that tool arguments cannot be trusted completely. This is the same lesson in reverse: subagent output cannot be trusted completely either. Validate at the orchestration boundary, give one retry, and keep uncertainty out of the rest of the flow.
+s05 就说过，工具的参数不能全信；这里是同一个道理反过来：子 agent 的输出也不能全信。加一层校验，不对就给一次机会重试，把不确定性挡在编排层外面。
 
 ```python
 run = await asyncio.to_thread(self.runner.run, prompt, schema, label)
 result = run.value
 if schema is not None:
     ok, err = SimpleJsonSchema(schema).validate(result)
-    if not ok:                                       # Retry once with a reminder, then fail
+    if not ok:                                       # 提醒一次重试，再不对就报错
         retry = await asyncio.to_thread(
-            self.runner.run, prompt + "\n\nReturn valid JSON.", schema, label
+            self.runner.run, prompt + "\n\n返回合法的 JSON。", schema, label
         )
         result = retry.value
         ok, err = SimpleJsonSchema(schema).validate(result)
         if not ok:
-            raise WorkflowInputError(f"agent({{schema}}) returned invalid output: {err}")
+            raise WorkflowInputError(f"agent({{schema}}) 输出不合法: {err}")
 ```
 
-## Task State and Progress Events
+## 任务状态和进度事件
 
-`LocalWorkflowTask` maintains status and token usage and emits an SDK-style event stream: `task_started` → a sequence of `task_progress` events containing phase changes, subagent starts, and log batches → one final `task_notification` reporting completion or failure, plus the output file and agent and token counts.
+`LocalWorkflowTask` 维护状态和 token 用量，向外发一条 SDK 风格的事件流：`task_started` → 一串 `task_progress`（包含阶段切换、子 agent 启动和日志输出）→ 最后一个 `task_notification`（完成或失败，带输出文件、agent 数和 token 数）。
 
-The demo prints these events in order and returns the task state after the final notification.
+演示会按顺序打印这些事件，并在最终通知后返回任务状态。
 
 ```python
 class LocalWorkflowTask:
-    def progress_event(self, ptype, **data):         # Phase/subagent/log
+    def progress_event(self, ptype, **data):         # 阶段/子agent/日志
         self.progress.append({"type": ptype, **data})
-        print(f"  progress   {ptype} ...")
+        print(f"  进度   {ptype} ...")
 ```
 
-## Storage: Snapshot + Journal for Resuming after Interruptions
+## 存储：快照 + journal，断了能续
 
-The runtime stores each run under `s16_workflow_runtime/.runtime/`: a `<runId>.json` snapshot, `<runId>.output.json` output, `<runId>.journal.jsonl` journal, and `<runId>.lock` coordination file. Every fresh run reserves a new `runId` with exclusive file creation before opening its journal. The run lock stays held through execution and final persistence, so another process cannot resume the same run at the same time. Its snapshot records the workflow name, arguments, and task state; resume validates the saved snapshot and journal before changing either successful artifact.
+运行时把每次运行的数据存在 `s16_workflow_runtime/.runtime/`：快照 `<runId>.json`、输出 `<runId>.output.json`、journal `<runId>.journal.jsonl` 和协调文件 `<runId>.lock`。每次新运行都会在打开 journal 前，用排他式文件创建预留新的 `runId`。整次执行和最终持久化期间都持有 run lock，另一个进程不能同时 resume 同一次运行。快照记录 workflow 名称、参数和任务状态；resume 会先验证已保存的快照和 journal，再改动原有的成功产物。
 
-The journal is the core of checkpointed resume. It records every `agent()` result one line at a time:
+journal 是断点续跑的核心，它一条一条记下来每个 `agent()` 的结果：
 
 ```python
 class WorkflowJournal:
@@ -168,31 +195,31 @@ class WorkflowJournal:
         self.cache[key] = value
 ```
 
-## Resume: Continue by runId and Reuse Everything Unchanged
+## resume：用 runId 续跑，没改的直接用缓存
 
-Calling the workflow again with `resume_from_run_id` reruns the script, but every `agent()` computes a deterministic semantic key. If that key is present in the journal, it returns the cached result without executing again. Every unchanged call hits the cache; only a changed call and the downstream steps that depend on it actually rerun.
+带着 `resume_from_run_id` 再次调用 workflow 时，脚本会重新执行，但每个 `agent()` 都会计算一个确定的语义 key：key 在 journal 里有记录，就直接返回缓存结果；只有改过的调用以及依赖它的后续步骤才会真的运行。
 
-The key detail is that keys cannot depend on concurrency order. Agents in `parallel` and `pipeline` finish in nondeterministic order. If "the nth completion" became the key, cache entries would map to the wrong calls on the next run. A key therefore uses a stable hash of call content, including type, label, prompt, and schema, rather than a shared counter:
+这里有个关键点：key 不能依赖并发顺序。`parallel` 和 `pipeline` 里 agent 完成的顺序是不确定的，用"第几个完成"当 key，两次跑缓存就对错位了。所以 key 是根据调用内容（类型、标签、prompt、schema）算的稳定哈希，不是一个会竞争的计数器：
 
 ```python
 def key(self, kind, label, prompt, schema):
     basis = f"{kind}|{label}|{prompt}|{json.dumps(schema, sort_keys=True)}"
     return f"{kind}-{_stable_hash(basis) % 10**10:010d}"
 
-# Inside agent():
+# agent() 内部：
 cached = self.journal.cached(key)
 if cached is not MISS:
     self.task.progress_event("workflow_agent", label=label, status="cached")
     return cached
 ```
 
-## Stable Call Keys
+## 稳定调用键
 
-On resume, the runtime must match each current `agent()` call with its earlier journal record. A stable hash gives unchanged workflow code and arguments the same call key. Real model output may vary; when the call content has not changed, resume uses the result already saved in the journal.
+续跑时，运行时需要把当前 `agent()` 与 journal 中的旧调用对应起来。稳定哈希让同一份 workflow 和同样的参数产生相同的调用 key。真实模型的回答可以变化；只要调用内容没有变化，resume 就直接使用 journal 中已经保存的结果。
 
-## See It Run
+## 跑起来看看
 
-The sample `review-changes` workflow uses `pipeline` to send each review dimension independently through audit → verify. Interactive mode uses the real API and reads the material to review from `args.changes`. `demo` uses fixed runner data to show pipeline, validation, journal, and resume behavior.
+示例 workflow `review-changes` 用 `pipeline` 让每个审查维度独立走“审计 → 验证”。默认交互模式使用真实 API，并从 `args.changes` 读取待审查内容；`demo` 使用固定 runner 数据来展示 pipeline、结构校验、journal 和续跑。
 
 ```python
 async def sample_workflow(ctx, args):
@@ -200,14 +227,14 @@ async def sample_workflow(ctx, args):
     changes = args.get("changes", "")
 
     async def audit(_v, dimension, _i):
-        out = await ctx.agent(f"Inspect this change for {dimension} issues:\n{changes}",
+        out = await ctx.agent(f"检查这段变更里有没有{dimension}相关的问题：\n{changes}",
                               schema=FINDINGS_SCHEMA, label=f"audit:{dimension}", phase="Review")
         return {"dimension": dimension, "findings": out["findings"]}
 
     async def verify(audited, dimension, _i):
         ctx.phase("Verify")
-        verdicts = await ctx.parallel([                       # Verify every finding independently
-            (lambda f=f: ctx.agent(f"Verify this finding against the change:\n{changes}\n\n{f}",
+        verdicts = await ctx.parallel([                       # 每条发现独立做对抗性验证
+            (lambda f=f: ctx.agent(f"根据变更内容验证这条 finding：\n{changes}\n\n{f}",
                                    schema=VERDICT_SCHEMA, label=f"verify:{dimension}:{f['title']}"))
             for f in audited["findings"]])
         return {"dimension": dimension,
@@ -217,29 +244,93 @@ async def sample_workflow(ctx, args):
     ...
 ```
 
-## Changes from s15
+## 相对 s15 的变更
 
-| | s15 Integrated Harness | s16 Workflow Runtime |
+| | s15 Agent Harness 集成 | s16 Workflow Runtime |
 |--|-----------|---------------------|
-| Loop | One model-driven loop | Main loop unchanged; a tool runs scripted orchestration |
-| Who decides the next step | Model decides each round | Script declares the orchestration in advance |
-| Multiple agents | One-shot s06 subagents | Scripted, resumable calls through an agent-runner boundary |
-| New mechanisms | — | Script primitives, host registry and tool adapter, task lifecycle, progress events, journal/resume, structured output |
+| 循环 | 单个、模型驱动 | 主循环不变；工具背后执行脚本编排 |
+| 谁决定下一步 | 模型逐轮决定 | 脚本预先写好编排流程 |
+| 多 agent | s06 子 agent，一次性派出去 | 通过 agent-runner 边界执行脚本化、可续跑的调用 |
+| 新增机制 | — | 编排原语、宿主 registry 与工具适配器、任务生命周期、进度事件、journal/续跑、结构化输出 |
 
-s16 does not replace the main loop. It exposes `Workflow` at the tool layer and starts a local workflow runtime behind it: one saved script coordinates N calls through an agent-runner boundary. An s06 subagent is dispatched once at the model's discretion; s16 turns the orchestration into resumable host code.
+s16 不替换主循环，它只是在工具层暴露 `Workflow`，背后启动一个本地 workflow 运行时：一份保存好的脚本通过 agent-runner 边界协调 N 次调用。s06 的子 agent 是模型临场派一次；s16 把编排写成可续跑的宿主代码。
 
-## Try It
+## 试一下
 
-```bash
-python s16_workflow_runtime/code.py          # Both the main model and Workflow agents use the real API
-python s16_workflow_runtime/code.py demo     # Deterministic review-changes fixture and event stream
-python s16_workflow_runtime/code.py resume   # Resume by the last runId; every agent() hits the journal cache
+```sh
+cd claude-code-harness-study
+python s16_workflow_runtime/code.py          # 主模型和工作流里的子 agent 都用真实模型
+python s16_workflow_runtime/code.py demo     # 用固定的假数据跑一遍「代码审查」工作流，看事件流
+python s16_workflow_runtime/code.py resume   # 用上一次的运行编号续跑，每一步都命中调用日志
 ```
 
-In the default command, ask the model to read the changes, place that text in `args.changes`, and run the saved `review-changes` workflow. Both the main model and workflow agents use the real API. The `demo` command uses fixed runner data so lifecycle and resume behavior can be observed repeatedly. A resumed demo reports `agents=0 tokens=0` when every call hits the cache.
+试试这些话：
 
-## Next
+1. `读一下 s16_workflow_runtime/code.py 里的示例改动，用保存好的「代码审查」工作流审一遍`（主模型先读改动，再把它交给工作流）
+2. `再跑一次刚才那个工作流，用上次的运行编号续跑`（看屏幕上每一步是不是都显示「命中缓存」）
 
-[s17 Goal Loop](../s17_goal_loop/) uses a smaller, independent loop to check whether a stated goal has been reached and decide whether another turn is needed.
+观察重点：demo 模式不需要 key；续跑全部命中缓存时，屏幕上会显示派出 0 个 agent、花 0 个 token。
 
-<!-- translation-sync: zh@v10, en@v10, ja@v10 -->
+---
+
+## 产品经理视角
+
+> 步骤固定、要求每次一样、要能审计和续跑的流程，交给写好的脚本；只在单个步骤里让模型发挥。「哪些交给模型、哪些写死」，是产品经理的关键判断。
+
+### 什么信号说明需要它
+
+- 流程是固定的：内容审核、批量处理、每月对账。
+- 要求每次结果的结构一致，方便统计和审计。
+- 流程很长，中途断了不想从头再来。
+- 有几个步骤可以同时做。
+
+### 代价
+
+- **不灵活**：遇到流程以外的情况，不会变通。
+- **要维护**：流程一变就要改脚本，需要有人负责。
+- **前期投入大**：设计成本高于让 Agent 自由发挥。
+
+### 先试试更便宜的办法
+
+- 流程还不稳定、经常变：先让 Agent 自己规划（s05），跑一段时间，把稳定下来的步骤再固定成脚本。
+- 完全不需要模型判断的流程：用普通的自动化工具，比如 RPA、集成平台。
+
+### 你要拍板的规则
+
+| 规则 | 示例 |
+|---|---|
+| 哪些写死、哪些交给模型 | 取数、校验、存档写死；判断是否合规、写评语交给模型 |
+| 失败了怎么重跑 | 单步失败自动重试 2 次；整体中断后从断点接着跑 |
+| 哪里必须人工确认 | 结果对外发出之前 |
+| 谁能改流程 | 产品经理提需求，工程师改，改动要评审 |
+
+### 怎么衡量
+
+- 流程的成功率、断点续跑的成功率。
+- 结果结构是否一致。
+- 单次流程的耗时和费用：并行以后应该下降。
+
+### 真实产品里的样子
+
+- Dify、Coze 的强项就是可视化工作流：用拖拽的方式，把模型调用、条件判断、工具调用串成固定流程（见选型篇的对照表）。
+- LangGraph 能把每一步的状态保存下来，中断后从断点继续。这是很多企业选它的重要原因。
+- n8n 这类自动化平台，也在固定流程里加入了 AI 节点。
+
+### 面试题
+
+**「同一个需求，你会用工作流，还是让 Agent 自己做？」**
+
+答题要点：
+
+- 看三点：步骤是否固定，是否需要一致和可审计，是否需要随机应变。
+- 常见答案是混合：外层流程固定，单个步骤交给模型。
+- 流程还不稳定时，先让 Agent 跑，稳定以后再固定下来。
+- 用成功率和结果一致性来衡量。
+
+> 16 个组件的判断卡放在一起比较，见 [选型篇](../guide/README.md)。
+
+---
+
+## 接下来
+
+[s17 目标（Goal Loop）](../s17_goal_loop/) 会用一个更小的独立判断器检查既定目标有没有达成，再决定要不要继续下一圈。

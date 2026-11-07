@@ -1,38 +1,57 @@
-# s05: TodoWrite — An Agent Without a Plan Drifts Off Course
-
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md)
+# s05: TodoWrite — 没有计划的 Agent，做着做着就偏了
 
 s01 → s02 → s03 → s04 → `s05` → [s06](../s06_subagent/) → s07 → ... → s16 → s17
 
-> *"An agent without a plan goes wherever the wind blows"* — List the steps first, then execute. Complex tasks are less likely to miss steps.
+> *"没有计划的 agent 走哪算哪"* — 先列步骤再动手，长任务更不容易漏项。
 >
-> **Harness Layer**: Planning — Let the Agent think before it acts.
+> **Harness 层**: 规划 — 让 Agent 在动手之前先想清楚。
 
 ---
 
-## The Problem
+## 本章要学会的判断
 
-Give the Agent a complex task: "Rename all Python files to snake_case, run tests, and fix failures."
+- **它解决什么**：让 Agent 先列计划再动手，做着做着不会忘、不会漏。
+- **什么时候需要它**：任务超过五到十步；用户反馈「做着做着忘了」「漏了几项」。
+- **你要拍板的规则**：多复杂的任务必须先列计划；计划要不要先给用户确认。
 
-The Agent starts working, renames 3 files, runs a test, finds 2 failures, starts fixing. While fixing, it forgets the original goal was "rename to snake_case", the test failures have consumed all its attention.
+> 代码看不懂可以先跳过，到网页上看「回放」动画。详细的判断方法在本章末尾的「产品经理视角」。
 
-The longer the conversation, the worse it gets: tool results keep filling the context, diluting the system prompt's influence. A 10-step refactoring: after steps 1-3, the Agent starts improvising because steps 4-10 have been pushed out of its attention.
+### 本章新词
+
+每章最多三个新词。看不懂的其他词，去[名词表](../guide/glossary.md)查。
+
+| 词 | 意思 | 比喻 |
+|---|---|---|
+| 待办清单 | Agent 自己写的步骤清单，做完一步打一个勾 | 贴在显示器上的今日待办 |
+| 催更 | 连续几圈没更新清单，程序塞一句提醒 | 领导路过问一句「进度表更新了吗」 |
+| 跑偏 | 任务做到一半，忘了最初要做什么 | 去厨房拿东西，到了厨房忘了要拿什么 |
 
 ---
 
-## The Solution
+## 问题
 
-![Todo Overview](images/todo-overview.en.svg)
+给 Agent 一个复杂任务：「把所有文件名改成统一格式，然后跑测试，把失败的修好。」
 
-S05 keeps the tool dispatch, permissions, and hooks from S04, then adds `todo_write` and a reminder counter. `todo_write` only updates planning state; the existing tools still perform the work.
+Agent 开始干活，改了 3 个文件，跑了一遍测试，发现 2 个失败，开始修。修着修着，它忘了最初的任务是「改文件名」，测试失败把注意力全吸走了。
 
-The new tool uses the same `TOOL_HANDLERS[block.name]` dispatch path. After three consecutive tool-use rounds without `todo_write`, the harness adds a reminder to that round's tool results.
+对话越长越严重：工具结果不断填满记录本，最初那句要求的影响力被稀释。一个 10 步的任务，做完前 3 步就开始即兴发挥，因为第 4 到第 10 步已经被挤出注意力了。
 
 ---
 
-## How It Works
+## 解决方案
 
-**TodoManager** owns the in-memory list, validates updates, and renders the state returned to the model. `run_todo_write` also prints that state in the terminal:
+![Todo Overview](images/todo-overview.svg)
+
+s04 的工具分发、权限检查和钩子全部保留，只加两样东西：
+
+- 一个「待办清单」工具：模型用它写计划、改每一步的状态。真正干活的还是原来那五个工具，清单只记录做到哪了。
+- 一个计数器：连续三圈都没碰清单，程序就在第三圈的工具结果里塞一句「该更新待办了」。模型看到，就会回头补上。
+
+---
+
+## 工作原理
+
+**TodoManager** 持有内存中的任务列表，负责校验更新，并把渲染结果返回给模型。`run_todo_write` 同时把这份状态打印到终端：
 
 ```python
 class TodoManager:
@@ -59,9 +78,9 @@ def run_todo_write(todos: list | str) -> str:
     return output
 ```
 
-An update may contain at most 20 items, each item needs non-empty `content`, and only one item may be `in_progress`. The string input path accepts JSON or a Python list representation without using `eval`.
+一次更新最多包含 20 项；每项都必须有非空的 `content`；同一时间只能有一个 `in_progress`。字符串输入可以是 JSON，也可以是 Python 列表表示，解析过程不使用 `eval`。
 
-The tool definition joins the other 5 in the dispatch map:
+工具定义和其他 5 个工具一起加入 dispatch map：
 
 ```python
 TOOLS = [
@@ -70,7 +89,7 @@ TOOLS = [
     {"name": "write_file", ...},
     {"name": "edit_file",  ...},
     {"name": "glob",       ...},
-    # s05: new entry
+    # s05: 新增一条
     {"name": "todo_write", "description": "Create and manage a task list ...",
      "input_schema": {
          "type": "object",
@@ -93,7 +112,7 @@ TOOLS = [
 TOOL_HANDLERS["todo_write"] = run_todo_write
 ```
 
-**Reminder**: after three tool-use rounds without `todo_write`, the reminder is appended to the third round's results and the counter resets:
+**Reminder**：连续三个工具调用轮次没有使用 `todo_write` 时，reminder 会追加到第三轮的结果中，随后计数器清零：
 
 ```python
 rounds_since_todo = 0 if used_todo else rounds_since_todo + 1
@@ -105,45 +124,100 @@ if rounds_since_todo >= 3:
     rounds_since_todo = 0
 ```
 
-Typical flow when the Agent receives a task: first call `todo_write` to list all steps (all `pending`) → pick one step, set it to `in_progress` → complete it, set to `completed` → look at the next `pending` → continue.
+Agent 收到任务后的典型流程：先调 `todo_write` 列出所有步骤（全 `pending`）→ 做一个步骤，改成 `in_progress` → 做完改成 `completed` → 看下一个 `pending` → 继续。
 
-**Key insight**: todo_write doesn't give the Agent any additional **execution capability**. What it adds is **planning capability**.
-
----
-
-## Changes from s04
-
-| Component | Before (s04) | After (s05) |
-|-----------|-------------|-------------|
-| Tool count | 5 (bash, read, write, edit, glob) | 6 (+todo_write) |
-| Planning | None | Stateful TODO list + reminder |
-| SYSTEM prompt | Generic prompt | Added "plan before executing" guidance |
-| Loop | Tool dispatch and hooks | Same dispatch path, plus rounds_since_todo and reminder injection |
+**关键洞察**：todo_write 不给 Agent 增加任何**执行能力**。它增加的是**规划能力**。
 
 ---
 
-## Try It
+## 相对 s04 的变更
+
+| 组件 | 之前 (s04) | 之后 (s05) |
+|------|-----------|-----------|
+| 工具数量 | 5 (bash, read, write, edit, glob) | 6 (+todo_write) |
+| 规划能力 | 无 | 带状态的 TODO 列表 + reminder |
+| SYSTEM 提示 | 通用提示 | 加入 "先计划再执行" 引导 |
+| 循环 | 工具分发与 Hooks | 保留分发路径，加入 rounds_since_todo 和 reminder 注入 |
+
+---
+
+## 试一下
 
 ```sh
-cd learn-claude-code
+cd claude-code-harness-study
 python s05_todo_write/code.py
 ```
 
-Try these prompts:
+试试这些话：
 
-1. `Refactor s05_todo_write/example/hello.py: add type hints, docstrings, and a main guard` (should list 3 steps first, then execute)
-2. `Create a Python package under s05_todo_write/example/demo_pkg with __init__.py, utils.py, and tests/test_utils.py`
-3. `Review Python files under s05_todo_write/example and fix any style issues`
+1. `给 s05_todo_write/example/hello.py 加上类型标注、说明文字和主入口`（看它先列 3 步再动手）
+2. `在 s05_todo_write/example/demo_pkg 下建一个小包：一个工具模块、一个测试文件`
+3. `检查 s05_todo_write/example 下的代码风格问题并修掉`
 
-What to watch for: Was the first tool call `todo_write`? How many TODO steps were listed? Did statuses move from `pending` to `in_progress` / `completed` during execution?
+观察重点：第一次用的是不是待办清单工具？清单列了几步？做的过程中，每一步的状态有没有从「待处理」变成「进行中」再变成「完成」？
 
 ---
 
-## What's Next
+## 产品经理视角
 
-The Agent can plan now. But if a task is too large, say "refactor the entire auth module", a TODO list alone isn't enough. That task is itself a collection of dozens of subtasks that would drown in a single conversation's context.
+> 让 Agent 先列计划再动手，长任务就不容易跑偏、漏项。计划还能展示给用户，让等待变得可预期。
 
-→ s06 Subagent: Break large tasks into subtasks, each handled by an independent Agent with its own clean context, no cross-contamination.
+### 什么信号说明需要它
 
+- 任务超过五到十步。
+- 用户反馈「做着做着忘了最初的要求」「漏了几项」。
+- 长时间等待时，用户不知道 Agent 在干什么、做到哪了。
 
-<!-- translation-sync: zh@v1, en@v1, ja@v1 -->
+### 代价
+
+- **更慢、更贵**：每更新一次计划，都要多花一点时间和费用。
+- **计划可能列错**：列错了还严格执行，比没有计划更糟。
+- **显得啰嗦**：简单任务也列计划，用户会觉得多余。
+
+### 先试试更便宜的办法
+
+- 让用户自己把大任务拆成几次小请求。
+- 在提示词里要求模型「先说思路再动手」，不维护一份正式的清单。
+
+### 你要拍板的规则
+
+| 规则 | 示例 |
+|---|---|
+| 多复杂才要列计划 | 预计超过 5 步的任务必须先列 |
+| 计划要不要用户先确认 | 要改动多处数据时，先给用户看计划，确认后再动手 |
+| 计划怎么展示 | 界面上显示清单和进度，完成一项打一个勾 |
+| 中途能不能改计划 | 可以改，但要告诉用户改了什么 |
+
+### 怎么衡量
+
+- **漏项率**：任务完成后，用户补一句「还有某某没做」的比例。
+- **计划和实际的偏差**：实际做的和最初列的差多少。
+- **长任务的中途放弃率**：用户能看到进度以后，放弃率应该下降。
+
+### 真实产品里的样子
+
+- Claude Code 做复杂任务时，会在界面上列出待办清单，边做边打勾，用的就是本章的机制。
+- Manus 团队在公开的经验总结里提到，他们的 Agent 会创建一份 todo.md，执行中不断更新，目的是让模型一直记得目标。
+- Kiro 这类工具在动手前先生成需求、设计和任务清单，请用户确认。「先计划再执行」本身就成了产品卖点。
+
+### 面试题
+
+**「Agent 做长任务经常漏步骤，怎么改进？」**
+
+答题要点：
+
+- 先分清症状：是漏项、跑偏，还是半路就停了。
+- 漏项和跑偏：加计划清单，并定期提醒模型回看计划。
+- 把计划展示给用户；复杂任务先请用户确认。
+- 用漏项率衡量改进效果。
+- 如果是半路停下、却自称做完了，那是 s17 要解决的问题。
+
+> 16 个组件的判断卡放在一起比较，见 [选型篇](../guide/README.md)。
+
+---
+
+## 接下来
+
+Agent 能计划了。但如果一个任务太大，比如「重构整个登录模块」，光靠一张待办清单不够。这个任务本身就是几十个小任务的集合，放在同一本记录本里会被淹没。
+
+s06 子 Agent（Subagent）→ 把大任务拆成子任务，每个子任务派一个独立的 Agent。它们各有自己干净的记录本，不会互相污染。
